@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["case_id", "rows"],
+  "properties": {
+    "case_id": { "type": "string" },
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["trial_id", "scores", "evidence", "violations"],
+        "properties": {
+          "trial_id": { "type": "string" },
+          "scores": {
+            "type": "object",
+            "additionalProperties": { "type": "integer", "enum": [0, 1] },
+            "minProperties": 1
+          },
+          "evidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["quote", "trial_id"],
+            "properties": {
+              "quote": { "type": "string", "minLength": 1 },
+              "trial_id": { "type": "string" }
+            }
+          },
+          "violations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["code", "trial_id", "evidence"],
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "enum": [
+                    "WRONG_TOOL",
+                    "TOOL_HALLUCINATION",
+                    "MISSING_REQUIRED_ARG",
+                    "INVENTED_ARG",
+                    "BAD_JSON_TYPE",
+                    "ENUM_OUT_OF_RANGE",
+                    "DUPLICATE_CALL",
+                    "LEAKED_TOOL_FORMAT",
+                    "GUESSED_REQUIRED_ARG",
+                    "IGNORED_OBSERVATION",
+                    "NO_STOP",
+                    "SIDE_EFFECT_WITHOUT_CONFIRM",
+                    "INVENTED_API",
+                    "SPEC_ITEM_MISSING",
+                    "PREMATURE_OK",
+                    "REGRESSION",
+                    "CONTEXT_OVERFLOW",
+                    "INFRA_ERROR",
+                    "JUDGE_UNSTABLE",
+                    "RUBBER_STAMP_REVIEW",
+                    "ITERATION_PROTOCOL_BREAK",
+                    "MISSING_SUBMIT_REVIEW"
+                  ]
+                },
+                "trial_id": { "type": "string" },
+                "evidence": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

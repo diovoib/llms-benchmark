@@ -1,0 +1,17 @@
+[project]
+name = "agent-bench"
+version = "0.1.0"
+description = "Local OpenAI-compatible agent/tool-calling benchmark"
+requires-python = ">=3.10"
+dependencies = [
+  "openai>=1.40.0",
+  "pyyaml>=6.0",
+  "pytest>=8.0",
+  "httpx>=0.27.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.scripts]
+agent-bench = "bench.__main__:main"
