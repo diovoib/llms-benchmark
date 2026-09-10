@@ -16,7 +16,7 @@ The final outcome should be assessed by a judge — a human or a larger LLM — 
 - Python 3.10+
 - A running OpenAI-compatible server (default `http://127.0.0.1:8080/v1`)
 - The model chat template **must support tools**.
-- `llama_bat` in config points at your launcher; the bench reads **`--api-key` only** (do not copy the key into yaml). Override: env `BENCH_API_KEY` or `api_key` in yaml.
+- `llama_bat` in config points at your launcher (default `llama.bat` next to this README); the bench reads **`--api-key` only** (do not copy the key into yaml). Override: env `BENCH_API_KEY` or `api_key` in yaml. `llama.bat` is gitignored — copy it from [`llama.bat.example`](llama.bat.example) and edit locally.
 
 ```text
 cd bench
@@ -26,9 +26,14 @@ python -m pip install -r requirements.txt
 
 ## Setup
 
-1. Download a server that hosts GGUF (or other) weights and exposes OpenAI-compatible `POST /v1/chat/completions`. This repo currently uses llama.cpp `llama-server` via `llama.bat`. Ollama, LM Studio, and vLLM will also work when `base_url` and the API key match between the running model server and the config file.
+1. Download a server that hosts GGUF (or other) weights and exposes OpenAI-compatible `POST /v1/chat/completions`. This repo currently uses llama.cpp `llama-server` via a local `llama.bat`. Ollama, LM Studio, and vLLM will also work when `base_url` and the API key match between the running model server and the config file.
 
-2. For llama.cpp (for other servers, make a similar launcher) edit `llama.bat`: fill in the path to where you installed `llama-server.exe`, your models directory `--models-dir`, and `--api-key`.
+2. For llama.cpp (for other servers, make a similar launcher) copy [`llama.bat.example`](llama.bat.example) to `llama.bat` and edit that copy: fill in the path to where you installed `llama-server.exe`, your models directory `--models-dir`, and `--api-key`. Git ignores `llama.bat`, so local paths and keys stay off the remote.
+
+```text
+copy llama.bat.example llama.bat
+```
+
 For example:
 
 ```text
@@ -41,7 +46,7 @@ For example:
 python -m pip install -r requirements.txt
 ```
 
-4. Start the server (`llama.bat`) and leave it running. Glance at the early server logs. From there you can take the names the server found and put the ones you want to use into the config file (step 5). Check whether it found them at all, and fix errors if any show up.
+4. Start the server (`llama.bat` in this directory) and leave it running. Glance at the early server logs. From there you can take the names the server found and put the ones you want to use into the config file (step 5). Check whether it found them at all, and fix errors if any show up.
 
 llama-server also starts a local chat Web UI — you can check that it works by opening `http://127.0.0.1:8080/` in a browser.
 
@@ -274,7 +279,7 @@ The `greedy` profile (temperature 0) is there to see whether things work at all,
 
 | Path | Role |
 | --- | --- |
-| [`llama.bat`](llama.bat) | Starts local llama-server (`--models-dir`, `--ctx-size`, `--jinja` — required for `tools`). |
+| [`llama.bat.example`](llama.bat.example) | Template for the local llama-server launcher (`--models-dir`, `--ctx-size`, `--jinja` — required for `tools`). Copy to `llama.bat` and edit; that file is gitignored. |
 | [`bench/`](bench/) | The whole benchmark: CLI, cases, mocks, judge (files, no API call). |
 | [`bench/config.yaml.example`](bench/config.yaml.example) | Endpoint, models, sampler profiles, suites and repeat counts. To be copied to `config.yaml` |
 | [`bench/src/bench/`](bench/src/bench/) | Code: client, preflight, runner, hard 0/1, coding loop. |

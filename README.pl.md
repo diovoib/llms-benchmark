@@ -16,7 +16,7 @@ Efekt finalny powinien być oceniony przez sędziego, człowieka albo większy L
 - Python 3.10+
 - Działający serwer OpenAI-compatible (domyślnie `http://127.0.0.1:8080/v1`)
 - Szablon czatu modelu **musi obsługiwać narzędzia**.
-- `llama_bat` w configu to Twój launcher; bench czyta z niego **tylko** `--api-key` (nie wklejaj klucza do yaml). Nadpisanie: env `BENCH_API_KEY` albo `api_key` w yaml.
+- `llama_bat` w configu to launcher serwera (domyślnie `llama.bat` obok tego README); bench czyta z niego **tylko** `--api-key` (nie wklejaj klucza do yaml). Nadpisanie: env `BENCH_API_KEY` albo `api_key` w yaml. `llama.bat` jest w `.gitignore` — skopiuj go z [`llama.bat.example`](llama.bat.example) i edytuj lokalnie.
 
 ```text
 cd bench
@@ -26,9 +26,14 @@ python -m pip install -r requirements.txt
 
 ## Setup
 
-1. Ściągnij serwer, który hostuje wagi GGUF (albo inne) i wystawia OpenAI-compatible `POST /v1/chat/completions`. Aktualnie używany jest tu llama.cpp `llama-server` przez `llama.bat`. Ale Ollama, LM Studio i vLLM również będą działać, gdy `base_url` i klucz API się zgadzają między uruchomionym serwerem hostującym modele i plikiem konfiguracyjnym.
+1. Ściągnij serwer, który hostuje wagi GGUF (albo inne) i wystawia OpenAI-compatible `POST /v1/chat/completions`. Aktualnie używany jest tu llama.cpp `llama-server` przez lokalny `llama.bat`. Ale Ollama, LM Studio i vLLM również będą działać, gdy `base_url` i klucz API się zgadzają między uruchomionym serwerem hostującym modele i plikiem konfiguracyjnym.
 
-2. Dla llama.cpp (dla innych stwórz podobny launcher) wyedytuj `llama.bat`: uzupełnij ścieżkę do miejsca gdzie zainstalowałeś swój launcher serwer `llama-server.exe`, podaj swój katalog z modelami `--models-dir`, `--api-key`. 
+2. Dla llama.cpp (dla innych stwórz podobny launcher) skopiuj [`llama.bat.example`](llama.bat.example) do `llama.bat` i wyedytuj tę kopię: uzupełnij ścieżkę do miejsca gdzie zainstalowałeś `llama-server.exe`, podaj swój katalog z modelami `--models-dir`, `--api-key`. Git ignoruje `llama.bat`, więc lokalne ścieżki i klucz nie idą na remote.
+
+```text
+copy llama.bat.example llama.bat
+```
+
 Na przykład:
 
 ```text
@@ -41,7 +46,7 @@ Na przykład:
 python -m pip install -r requirements.txt
 ```
 
-4. Uruchom serwer (`llama.bat`) i zostaw go włączonego. Zerknij na początkowe logi serwera. Stąd możesz wziąć nazwy, które serwer znalazł i wpisać te, których chcesz użyć, do pliku konfiguracyjnego (pkt 5). Zobaczyć czy w ogóle je znalazł, poprawić błedy jeśli jakieś są.
+4. Uruchom serwer (`llama.bat` w tym katalogu) i zostaw go włączonego. Zerknij na początkowe logi serwera. Stąd możesz wziąć nazwy, które serwer znalazł i wpisać te, których chcesz użyć, do pliku konfiguracyjnego (pkt 5). Zobaczyć czy w ogóle je znalazł, poprawić błedy jeśli jakieś są.
 
 llama-serwer uruchamia lokalnie Web UI z chatem - możesz sprawdzić czy działa otwierając w przeglądarce: `http://127.0.0.1:8080/`.
 
@@ -274,7 +279,7 @@ Profil `greedy` (temperatura 0) jest po to, żeby zobaczyć czy w ogóle działa
 
 | Ścieżka                                                              | Rola                                                                                          |
 | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `[llama.bat](llama.bat)`                                             | Start lokalnego llama-server (`--models-dir`, `--ctx-size`, `--jinja` — wymagane do `tools`). |
+| `[llama.bat.example](llama.bat.example)`                             | Szablon lokalnego launchera llama-server (`--models-dir`, `--ctx-size`, `--jinja` — wymagane do `tools`). Skopiuj do `llama.bat` i edytuj; ten plik jest gitignored. |
 | `[bench/](bench/)`                                                   | Cały benchmark: CLI, przypadki, mocki, sędzia (pliki, bez wołania API).                       |
 | `[bench/config.yaml.example](bench/config.yaml.example)`             | Endpoint, modele, profile samplera, suity i liczba powtórzeń. Do skopiowania do `config.yaml` |
 | `[bench/src/bench/](bench/src/bench/)`                               | Kod: klient, preflight, runner, twarde 0/1, pętla kodowania.                                  |
