@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI
 
@@ -47,13 +48,46 @@ class BenchClient:
         base_url: str,
         api_key: str,
         model: str,
+        interrupt_event: threading.Event | None = None,
+        on_live_armed: Callable[[], None] | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.api_key = api_key
+        self.interrupt_event = interrupt_event
+        self._on_live_armed = on_live_armed
+        self._live_lock = threading.Lock()
+        self._live_close: Callable[[], None] | None = None
         if not self.api_key:
             raise ValueError("api_key is required")
-        self._client = OpenAI(base_url=self.base_url, api_key=self.api_key, timeout=None)
+
+    def _openai(self) -> OpenAI:
+        return OpenAI(base_url=self.base_url, api_key=self.api_key, timeout=None)
+
+    def close_live(self) -> None:
+        with self._live_lock:
+            closer = self._live_close
+            self._live_close = None
+        if closer is None:
+            return
+        try:
+            closer()
+        except Exception:
+            pass
+
+    def raise_if_interrupted(self) -> None:
+        if self.interrupt_event is not None and self.interrupt_event.is_set():
+            self.close_live()
+            raise KeyboardInterrupt
+
+    def _arm_live(self, closer: Callable[[], None]) -> None:
+        with self._live_lock:
+            self._live_close = closer
+        if self._on_live_armed is not None:
+            self._on_live_armed()
+        if self.interrupt_event is not None and self.interrupt_event.is_set():
+            self.close_live()
+            raise KeyboardInterrupt
 
     def chat(
         self,
@@ -96,14 +130,33 @@ class BenchClient:
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
 
+        self.raise_if_interrupted()
         started = time.perf_counter()
+        resp = None
+        req_client = self._openai()
         try:
-            resp = self._client.chat.completions.create(**kwargs)
+            def _abort_live() -> None:
+                try:
+                    req_client.close()
+                except Exception:
+                    pass
+
+            self._arm_live(_abort_live)
+            resp = req_client.chat.completions.create(**kwargs)
+        except KeyboardInterrupt:
+            self.close_live()
+            raise
+        except SystemExit:
+            self.close_live()
+            raise
         except APITimeoutError as exc:
+            self.raise_if_interrupted()
             return ChatResult(ok=False, infra_code="INFRA_ERROR", error=f"timeout: {exc}", latency_s=time.perf_counter() - started)
         except APIConnectionError as exc:
+            self.raise_if_interrupted()
             return ChatResult(ok=False, infra_code="INFRA_ERROR", error=f"connection: {exc}", latency_s=time.perf_counter() - started)
         except APIStatusError as exc:
+            self.raise_if_interrupted()
             status = getattr(exc, "status_code", None)
             body = ""
             try:
@@ -122,8 +175,12 @@ class BenchClient:
                 latency_s=time.perf_counter() - started,
             )
         except Exception as exc:
+            self.raise_if_interrupted()
             return ChatResult(ok=False, infra_code="INFRA_ERROR", error=str(exc), latency_s=time.perf_counter() - started)
+        finally:
+            self.close_live()
 
+        self.raise_if_interrupted()
         latency = time.perf_counter() - started
         raw = resp.model_dump()
         choice = (raw.get("choices") or [{}])[0]

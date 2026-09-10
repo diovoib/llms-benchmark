@@ -113,6 +113,7 @@ def run_coding_trial(
     user = coding_user_prompt(spec=spec, contract=contract, max_rounds=max_rounds)
 
     messages: list[dict[str, Any]] = [{"role": "user", "content": user}]
+    client.raise_if_interrupted()
     result = client.chat(messages, tools=None, tool_choice=None, **sampler)
     assistant = result.to_message()
     if result.error and not assistant.get("content"):

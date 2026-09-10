@@ -34,7 +34,14 @@ def _root(base_url: str) -> str:
     return u
 
 
-def _get_json(url: str, api_key: str | None = None) -> tuple[int | None, Any]:
+def _get_json(
+    url: str,
+    api_key: str | None = None,
+    *,
+    client: BenchClient | None = None,
+) -> tuple[int | None, Any]:
+    if client is not None:
+        client.raise_if_interrupted()
     try:
         headers = {"Accept": "application/json"}
         if api_key:
@@ -43,14 +50,31 @@ def _get_json(url: str, api_key: str | None = None) -> tuple[int | None, Any]:
         with urlopen(req, timeout=60) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
             try:
-                return resp.status, json.loads(raw)
+                status, body = resp.status, json.loads(raw)
             except json.JSONDecodeError:
-                return resp.status, raw
+                status, body = resp.status, raw
+    except KeyboardInterrupt:
+        raise
+    except SystemExit:
+        raise
     except Exception as exc:
+        if client is not None:
+            client.raise_if_interrupted()
         return None, str(exc)
+    if client is not None:
+        client.raise_if_interrupted()
+    return status, body
 
 
-def _post_json(url: str, body: dict[str, Any], api_key: str | None = None) -> tuple[int | None, Any]:
+def _post_json(
+    url: str,
+    body: dict[str, Any],
+    api_key: str | None = None,
+    *,
+    client: BenchClient | None = None,
+) -> tuple[int | None, Any]:
+    if client is not None:
+        client.raise_if_interrupted()
     data = json.dumps(body).encode("utf-8")
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
     if api_key:
@@ -60,19 +84,32 @@ def _post_json(url: str, body: dict[str, Any], api_key: str | None = None) -> tu
         with urlopen(req, timeout=60) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
             try:
-                return resp.status, json.loads(raw)
+                status, payload = resp.status, json.loads(raw)
             except json.JSONDecodeError:
-                return resp.status, raw
+                status, payload = resp.status, raw
+    except KeyboardInterrupt:
+        raise
+    except SystemExit:
+        raise
     except HTTPError as exc:
+        if client is not None:
+            client.raise_if_interrupted()
         raw = exc.read().decode("utf-8", errors="replace")
         try:
             return exc.code, json.loads(raw)
         except json.JSONDecodeError:
             return exc.code, raw
     except URLError as exc:
+        if client is not None:
+            client.raise_if_interrupted()
         return None, str(exc.reason if getattr(exc, "reason", None) else exc)
     except Exception as exc:
+        if client is not None:
+            client.raise_if_interrupted()
         return None, str(exc)
+    if client is not None:
+        client.raise_if_interrupted()
+    return status, payload
 
 
 def _error_message(payload: Any) -> str:
@@ -87,11 +124,16 @@ def _error_message(payload: Any) -> str:
     return str(payload)
 
 
-def collect_server_info(base_url: str, api_key: str | None = None) -> dict[str, Any]:
+def collect_server_info(
+    base_url: str,
+    api_key: str | None = None,
+    *,
+    client: BenchClient | None = None,
+) -> dict[str, Any]:
     root = _root(base_url)
-    health_status, health = _get_json(f"{root}/health", api_key)
-    props_status, props = _get_json(f"{root}/props", api_key)
-    models_status, models = _get_json(f"{base_url.rstrip('/')}/models", api_key)
+    health_status, health = _get_json(f"{root}/health", api_key, client=client)
+    props_status, props = _get_json(f"{root}/props", api_key, client=client)
+    models_status, models = _get_json(f"{base_url.rstrip('/')}/models", api_key, client=client)
     chat_format = None
     build = None
     if isinstance(props, dict):
@@ -136,7 +178,7 @@ def _make_renderer(client: BenchClient, common: dict[str, Any]) -> TemplateRende
         last_error = None
         saw_missing = False
         for url in apply_urls:
-            status, payload = _post_json(url, body, client.api_key)
+            status, payload = _post_json(url, body, client.api_key, client=client)
             if status in (404, 405) or status is None:
                 saw_missing = True
                 last_error = _error_message(payload)
@@ -169,7 +211,8 @@ def _make_renderer(client: BenchClient, common: dict[str, Any]) -> TemplateRende
 
 
 def run_preflight(client: BenchClient, sampler: dict[str, Any]) -> dict[str, Any]:
-    info = collect_server_info(client.base_url, getattr(client, "api_key", None))
+    info = collect_server_info(client.base_url, getattr(client, "api_key", None), client=client)
+    client.raise_if_interrupted()
     messages = [{"role": "user", "content": "Reply with the single word pong."}]
     common = dict(
         temperature=0,

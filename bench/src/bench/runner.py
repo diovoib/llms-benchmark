@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import os
 import hashlib
 import json
+import signal
+import sys
+import threading
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -124,6 +128,21 @@ def bind_weather_expect(case: dict[str, Any], repeat: int) -> dict[str, Any]:
     return out
 
 
+def mark_interrupted_if_present(paths: list[Path]) -> None:
+    for path in paths:
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        data["interrupted"] = True
+        data["in_progress"] = False
+        write_json(path, data)
+
+
 def run_tool_or_agent_case(
     *,
     client: BenchClient,
@@ -151,6 +170,7 @@ def run_tool_or_agent_case(
 
     hit_max = False
     for step_i in range(max_steps):
+        client.raise_if_interrupted()
         result = client.chat(
             messages,
             tools=case.get("tools"),
@@ -304,6 +324,8 @@ def _agg_delta(instructed: dict[str, Any] | None, neutral: dict[str, Any] | None
 
 
 def build_summary(all_trials: list[dict[str, Any]], coding_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    all_trials = [t for t in all_trials if not t.get("interrupted") and not t.get("in_progress")]
+    coding_rows = [r for r in coding_rows if not r.get("interrupted") and not r.get("in_progress")]
     by_variant: dict[str, list] = defaultdict(list)
     for t in all_trials:
         if t.get("suite") == "coding":
@@ -412,6 +434,15 @@ def run_benchmark(
     pending_line = False
     n_ok = 0
     n_fail = 0
+    interrupt_event = threading.Event()
+    live_clients: list[BenchClient] = []
+    live_lock = threading.Lock()
+    live_changed = threading.Event()
+    pending_trial_jsons: list[Path] = []
+    previous_handlers: dict[int, Any] = {}
+    signals_installed = False
+    interrupt_lock = threading.Lock()
+    win_ctrl_unhook: Any = None
 
     def finish_trial_console(started: float, hard_pass: bool, reasons: list[str] | None = None) -> None:
         nonlocal pending_line, n_ok, n_fail
@@ -422,6 +453,99 @@ def run_benchmark(
         else:
             n_fail += 1
             line_fail(started, reasons)
+
+    def close_all_live() -> None:
+        with live_lock:
+            clients = list(live_clients)
+        for item in clients:
+            item.close_live()
+
+    def on_live_armed() -> None:
+        live_changed.set()
+        if interrupt_event.is_set():
+            close_all_live()
+
+    def register_client(client: BenchClient) -> None:
+        with live_lock:
+            live_clients.append(client)
+
+    def note_interrupt() -> None:
+        with interrupt_lock:
+            if interrupt_event.is_set():
+                return
+            sys.stderr.write("received interrupt, doing graceful shutdown\n")
+            sys.stderr.flush()
+            interrupt_event.set()
+        live_changed.set()
+
+    def disarm_second_ctrl_c() -> None:
+        if threading.current_thread() is not threading.main_thread():
+            return
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+        if hasattr(signal, "SIGBREAK"):
+            signal.signal(signal.SIGBREAK, signal.SIG_DFL)
+
+    def on_interrupt(signum: int, frame: Any) -> None:
+        note_interrupt()
+        disarm_second_ctrl_c()
+        raise KeyboardInterrupt
+
+    def abort_http_when_interrupted() -> None:
+        interrupt_event.wait()
+        while True:
+            close_all_live()
+            live_changed.wait(timeout=0.2)
+            live_changed.clear()
+
+    def hook_win_ctrl() -> Any:
+        if sys.platform != "win32":
+            return None
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        handler_routine = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.DWORD)
+        ctrl_c, ctrl_break = 0, 1
+
+        def win_handler(ctrl_type: int) -> bool:
+            if ctrl_type not in (ctrl_c, ctrl_break):
+                return False
+            if interrupt_event.is_set():
+                os._exit(130)
+            note_interrupt()
+            return True
+
+        callback = handler_routine(win_handler)
+        if not kernel32.SetConsoleCtrlHandler(callback, True):
+            return None
+
+        unhooked = False
+
+        def unhook() -> None:
+            nonlocal unhooked
+            if unhooked:
+                return
+            unhooked = True
+            kernel32.SetConsoleCtrlHandler(callback, False)
+
+        return unhook
+
+    threading.Thread(
+        target=abort_http_when_interrupted,
+        name="bench-abort-http",
+        daemon=True,
+    ).start()
+
+    if threading.current_thread() is threading.main_thread():
+        previous_handlers[signal.SIGINT] = signal.getsignal(signal.SIGINT)
+        signal.signal(signal.SIGINT, on_interrupt)
+        if hasattr(signal, "siginterrupt"):
+            signal.siginterrupt(signal.SIGINT, True)
+        if hasattr(signal, "SIGBREAK"):
+            previous_handlers[signal.SIGBREAK] = signal.getsignal(signal.SIGBREAK)
+            signal.signal(signal.SIGBREAK, on_interrupt)
+        signals_installed = True
+        win_ctrl_unhook = hook_win_ctrl()
 
     try:
         for model in cfg["models"]:
@@ -436,11 +560,15 @@ def run_benchmark(
                     base_url=cfg["base_url"],
                     api_key=str(cfg["api_key"]),
                     model=str(model["name"]),
+                    interrupt_event=interrupt_event,
+                    on_live_armed=on_live_armed,
                 )
+                register_client(client)
                 tool_case_ids = [c for c in case_ids if c != "C01"]
                 if tool_case_ids:
                     pending_line = True
                     t0 = line_start(f"preflight  {profile_name}")
+                    client.raise_if_interrupted()
                     pre = run_preflight(client, profile)
                     pending_line = False
                     if pre.get("ok"):
@@ -518,6 +646,7 @@ def run_benchmark(
                                 res = run_tool_or_agent_case(
                                     client=client, case=bound, sampler=sampler, preflight=pre, repeat=0
                                 )
+                                client.raise_if_interrupted()
                                 hp = bool((res.get("score") or {}).get("hard_pass"))
                                 finish_trial_console(t0, hp, score_reasons(res.get("score")))
                                 sweep_rows.append({
@@ -537,6 +666,8 @@ def run_benchmark(
                             seed = choose_seed(profile, cid, rep, variant_name)
                             sampler = sampler_kwargs(profile, model, seed)
                             pending_line = True
+                            tdir = dest / "cases" / cid
+                            pending_trial_jsons = [tdir / f"trial_{rep + 1:03d}.json"]
                             t0 = line_start(
                                 trial_label(
                                     case_id=cid,
@@ -561,12 +692,12 @@ def run_benchmark(
                                 "prompt_variant": variant_name,
                                 **res,
                             }
-                            all_trials.append(trial)
-                            tdir = dest / "cases" / cid
                             payload = {k: trial[k] for k in trial if k != "messages"}
                             payload["messages"] = trial.get("messages")
                             write_json(tdir / f"trial_{rep + 1:03d}.json", payload)
                             write_text(tdir / f"trial_{rep + 1:03d}.txt", trial_txt(trial))
+                            pending_trial_jsons = []
+                            all_trials.append(trial)
                             hp = bool((trial.get("score") or {}).get("hard_pass"))
                             finish_trial_console(t0, hp, score_reasons(trial.get("score")))
 
@@ -576,13 +707,21 @@ def run_benchmark(
                         base_url=cfg["base_url"],
                         api_key=str(cfg["api_key"]),
                         model=str(model["name"]),
+                        interrupt_event=interrupt_event,
+                        on_live_armed=on_live_armed,
                     )
+                    register_client(coding_client)
                     for rep in range(nrep):
                         seed = choose_seed(profile, "C01", rep)
                         sampler = sampler_kwargs(profile, model, seed)
                         trial_id = opaque_id(str(model["name"]), profile_name, "C01", str(rep))
                         cdir = dest_profile / "coding" / f"trial_{rep + 1:03d}"
                         pending_line = True
+                        pending_trial_jsons = [
+                            cdir / "trial.json",
+                            cdir / "conversation.json",
+                            cdir / "meta.json",
+                        ]
                         t0 = line_start(
                             trial_label(
                                 case_id="C01",
@@ -609,12 +748,13 @@ def run_benchmark(
                             "prompt_variant": None,
                             "transcript_text": (cdir / "conversation.txt").read_text(encoding="utf-8"),
                         })
-                        coding_rows.append(row)
-                        all_trials.append(row)
                         write_json(
                             cdir / "trial.json",
                             {k: v for k, v in row.items() if k != "transcript_text"},
                         )
+                        pending_trial_jsons = []
+                        coding_rows.append(row)
+                        all_trials.append(row)
                         coding_ok = bool(row.get("python_checks_ok")) and not row.get("infra")
                         reasons = []
                         if row.get("infra"):
@@ -624,9 +764,20 @@ def run_benchmark(
                         finish_trial_console(t0, coding_ok, reasons)
     except KeyboardInterrupt:
         interrupted = True
+        disarm_second_ctrl_c()
         if pending_line:
             line_interrupted()
         interrupt_at = datetime.now(timezone.utc).isoformat()
+        mark_interrupted_if_present(pending_trial_jsons)
+        pending_trial_jsons = []
+    finally:
+        if interrupt_event.is_set():
+            disarm_second_ctrl_c()
+        elif signals_installed:
+            for sig, handler in previous_handlers.items():
+                signal.signal(sig, handler)
+            if win_ctrl_unhook is not None:
+                win_ctrl_unhook()
 
     summary = build_summary(all_trials, coding_rows)
     if interrupted:
