@@ -230,6 +230,11 @@ def leak_in_content(content: str) -> bool:
     return bool(LEAK_RE.search(content))
 
 
+def has_duplicate_tool_name(calls: list[dict[str, Any]]) -> bool:
+    names = [call.get("name") for call in calls if call.get("name")]
+    return len(names) != len(set(names))
+
+
 def score_call_discipline(
     case: dict[str, Any],
     calls: list[dict[str, Any]],
@@ -313,6 +318,10 @@ def score_tools_turn(
         violations.append("LEAKED_TOOL_FORMAT")
         hard_pass = False
 
+    if has_duplicate_tool_name(normalized):
+        violations.append("DUPLICATE_CALL")
+        hard_pass = False
+
     exp_v, exp_n, exp_ok = score_expected_invocations(normalized, expect)
     violations.extend(exp_v)
     notes.extend(exp_n)
@@ -357,7 +366,11 @@ def score_agent_trial(case: dict[str, Any], steps: list[dict[str, Any]], final_c
 
     tool_invocations: list[dict[str, Any]] = []
     for step in steps:
-        tool_invocations.extend(step.get("normalized") or [])
+        step_calls = step.get("normalized") or []
+        tool_invocations.extend(step_calls)
+        if has_duplicate_tool_name(step_calls):
+            violations.append("DUPLICATE_CALL")
+            hard_pass = False
         step_score = step.get("score") or {}
         if step_score.get("violations"):
             violations.extend(step_score["violations"])
