@@ -16,7 +16,7 @@ The final outcome should be assessed by a judge — a human or a larger LLM — 
 - Python 3.10+
 - A running OpenAI-compatible server (default `http://127.0.0.1:8080/v1`)
 - The model chat template **must support tools**.
-- `launcher` in config points at your server launcher (default `../llama.bat` from `bench/`); the bench reads **`--api-key`** and **`--ctx-size` / `--ctx_size` / `-c`**. Missing ctx defaults to 16384 (used as C01 `max_tokens`; it does not change the running server). Do not copy the key into yaml. Override: env `BENCH_API_KEY` or `api_key` in yaml. `llama.bat` / `llama.sh` are gitignored — copy from [`llama.bat.example`](llama.bat.example) or [`llama.sh.example`](llama.sh.example) and edit locally.
+- `launcher` in config points at your server launcher (default `../llama.bat` from `bench/`); the bench reads **`--api-key`** (optional) and **`--ctx-size` / `--ctx_size` / `-c`**. No or empty `--api-key` means requests go without `Authorization`. Missing ctx defaults to 16384 (used as C01 `max_tokens`; it does not change the running server). Do not copy the key into yaml. Override: env `BENCH_API_KEY`. `llama.bat` / `llama.sh` are gitignored — copy from [`llama.bat.example`](llama.bat.example) or [`llama.sh.example`](llama.sh.example) and edit locally.
 
 ```text
 cd bench

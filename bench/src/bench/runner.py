@@ -354,7 +354,7 @@ def _suite_max_tokens(cfg: dict[str, Any], suite: str) -> int:
 def _make_client(cfg: dict[str, Any], model: dict[str, Any], interrupt_event: threading.Event, on_live_armed: Callable[[], None]) -> BenchClient:
     return BenchClient(
         base_url=cfg["base_url"],
-        api_key=str(cfg["api_key"]),
+        api_key=str(cfg.get("api_key") or ""),
         model=str(model["name"]),
         connect_timeout_s=float(cfg["connect_timeout_s"]),
         interrupt_event=interrupt_event,
@@ -819,7 +819,7 @@ def run_benchmark(
                 "path": cfg.get("_launcher"),
                 "kind": cfg.get("_launcher_kind"),
                 "ctx_size": cfg.get("ctx_size"),
-                "api_key": "***",
+                "api_key": "***" if cfg.get("api_key") else None,
             },
         },
     )

@@ -270,11 +270,15 @@ class BenchClient:
         self._live_lock = threading.Lock()
         self._live_close: Callable[[], None] | None = None
         self._http: httpx.Client | None = None
-        if not self.api_key:
-            raise ValueError("api_key is required")
 
     def _client(self) -> httpx.Client:
         if self._http is None:
+            headers = {
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            }
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
             self._http = httpx.Client(
                 timeout=httpx.Timeout(
                     connect=self.connect_timeout_s,
@@ -282,11 +286,7 @@ class BenchClient:
                     write=None,
                     pool=self.connect_timeout_s,
                 ),
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                    "Accept": "application/json",
-                },
+                headers=headers,
             )
         return self._http
 

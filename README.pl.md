@@ -16,7 +16,7 @@ Efekt finalny powinien być oceniony przez sędziego, człowieka albo większy L
 - Python 3.10+
 - Działający serwer OpenAI-compatible (domyślnie `http://127.0.0.1:8080/v1`)
 - Szablon czatu modelu **musi obsługiwać narzędzia**.
-- `launcher` w configu to launcher serwera (domyślnie `../llama.bat` z katalogu `bench/`); bench czyta z niego **`--api-key`** oraz **`--ctx-size` / `--ctx_size` / `-c`**. Brak ctx = 16384 (to jest `max_tokens` dla C01; nie zmienia działającego serwera). Nie wklejaj klucza do yaml. Nadpisanie: env `BENCH_API_KEY` albo `api_key` w yaml. `llama.bat` / `llama.sh` są w `.gitignore` — skopiuj z [`llama.bat.example`](llama.bat.example) albo [`llama.sh.example`](llama.sh.example) i edytuj lokalnie.
+- `launcher` w configu to launcher serwera (domyślnie `../llama.bat` z katalogu `bench/`); bench czyta z niego **`--api-key`** (opcjonalne) oraz **`--ctx-size` / `--ctx_size` / `-c`**. Brak lub pusty `--api-key` oznacza, że requesty będą bez `Authorization`. Brak ctx = 16384 (to jest `max_tokens` dla C01; nie zmienia działającego serwera). Nie wklejaj klucza do yaml. Nadpisanie: env `BENCH_API_KEY`. `llama.bat` / `llama.sh` są w `.gitignore` — skopiuj z [`llama.bat.example`](llama.bat.example) albo [`llama.sh.example`](llama.sh.example) i edytuj lokalnie.
 
 ```text
 cd bench

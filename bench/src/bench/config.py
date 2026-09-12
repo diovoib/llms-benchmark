@@ -193,16 +193,12 @@ def load_config(path: str | Path) -> dict[str, Any]:
     data["_launcher_kind"] = parsed.get("kind")
     data["ctx_size"] = int(parsed.get("ctx_size") or DEFAULT_CTX_SIZE)
 
+    data.pop("api_key", None)
     env_key = os.environ.get("BENCH_API_KEY")
     if env_key:
         data["api_key"] = env_key
-    elif not data.get("api_key"):
-        if parsed.get("api_key"):
-            data["api_key"] = parsed["api_key"]
-    if not data.get("api_key"):
-        raise ValueError(
-            "api_key missing: set launcher (reads --api-key), env BENCH_API_KEY, or api_key in yaml"
-        )
+    else:
+        data["api_key"] = parsed.get("api_key") or ""
     return data
 
 
