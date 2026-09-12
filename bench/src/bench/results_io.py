@@ -57,13 +57,13 @@ def trial_txt(trial: dict[str, Any]) -> str:
     return "\n".join(str(x) for x in lines) + "\n"
 
 
-def write_case_md(path: Path, *, case_id: str, purpose: str, expected_answer: str) -> None:
+def write_case_md(path: Path, *, case_id: str, purpose: str, expected_result: str) -> None:
     write_text(
         path,
         (
             f"# {case_id}\n\n"
             f"## Purpose\n\n{purpose}\n\n"
-            f"## Expected answer\n\n{expected_answer}\n"
+            f"## Expected result\n\n{expected_result}\n"
         ),
     )
 
@@ -80,7 +80,7 @@ This directory is enough to judge the run. Do not open the git repository.
 - `judge/` — judge prompt, criteria, violation codes, JSON schema.
 - `prompts/` — system-prompt snapshots (`SYSTEM_<variant>.txt`) and `POLICY.txt`.
 - `<model>/<profile>/<prompt_variant>/SYSTEM.txt` — the system text actually prepended for that variant (policy already appended on A04/A07 trials).
-- `<model>/<profile>/<prompt_variant>/cases/<id>/CASE.md` — purpose and expected answer for that case.
+- `<model>/<profile>/<prompt_variant>/cases/<id>/CASE.md` — purpose and expected result for that case.
 - `trial_*.json` / `trial_*.txt` — assembled transcript used for mechanical scoring.
 - `trial_*.raw.txt` — unsparsed HTTP: request body as sent (messages, tools, sampler, max_tokens) and response body as received (SSE or error JSON). No Authorization header.
 - C01: `coding/trial_*/conversation.json`, `conversation.txt`, `conversation.raw.txt`. C01 has no CASE.md.
@@ -100,7 +100,7 @@ This directory is enough to judge the run. Do not open the git repository.
 Start from this folder’s `README.md`. Then:
 
 1. `judge/JUDGE_PROMPT.md` and `judge/CRITERIA.md`
-2. `CASE.md` next to tools/agent trials (purpose / expected answer). C01 has no CASE.md — read `conversation.txt`, `python_checks.json`, and `attempts/`. Do not run the extracted code.
+2. `CASE.md` next to tools/agent trials (purpose / expected result). C01 has no CASE.md — read `conversation.txt`, `python_checks.json`, and `attempts/`. Do not run the extracted code.
 3. `trial_*.txt` (assembled chat)
 4. `*.raw.txt` when the `.txt` is short but wall time or `completion_tokens` is large — generation is on the wire even if the assembled transcript looks empty
 5. `trial_*.json` and the **prompt-variant** `summary.json` (`<model>/<profile>/<variant>/`). Those are mechanical ground truth. Profile (`greedy`/`real`), model, and this root `summary.json` are unweighted means of the child headlines, not a second scoring pass.

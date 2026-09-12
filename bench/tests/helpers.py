@@ -105,7 +105,7 @@ def advertised_tool_schemas() -> dict[str, dict[str, Any]]:
         if name:
             out[name] = tool
     for case in all_cases().values():
-        for tool in case.get("tools") or []:
+        for tool in case.tools:
             name = function_name(tool)
             if name and name not in out:
                 out[name] = tool
@@ -115,7 +115,7 @@ def advertised_tool_schemas() -> dict[str, dict[str, Any]]:
 def names_in_case_catalogs() -> set[str]:
     names: set[str] = set()
     for case in all_cases().values():
-        for tool in case.get("tools") or []:
+        for tool in case.tools:
             name = function_name(tool)
             if name:
                 names.add(name)

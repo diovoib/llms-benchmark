@@ -140,17 +140,17 @@ class TestCatalogSurface:
     def test_shared_eight_tool_catalog_is_exactly_what_those_cases_expose(self) -> None:
         catalog_names = [function_name(tool) for tool in CATALOG_8]
         cases = all_cases()
-        assert [function_name(tool) for tool in cases["T02"]["tools"]] == catalog_names
-        assert [function_name(tool) for tool in cases["T03_en"]["tools"]] == catalog_names
-        assert [function_name(tool) for tool in cases["T03_pl"]["tools"]] == catalog_names
+        assert [function_name(tool) for tool in cases["T02"].tools] == catalog_names
+        assert [function_name(tool) for tool in cases["T03_en"].tools] == catalog_names
+        assert [function_name(tool) for tool in cases["T03_pl"].tools] == catalog_names
 
     def test_shared_large_catalog_is_exactly_what_the_large_catalog_case_exposes(self) -> None:
         catalog_names = [function_name(tool) for tool in CATALOG_LARGE]
-        assert [function_name(tool) for tool in all_cases()["A05"]["tools"]] == catalog_names
+        assert [function_name(tool) for tool in all_cases()["A05"].tools] == catalog_names
 
     def test_optional_weather_case_exposes_district_and_the_basic_catalog_does_not(self) -> None:
-        optional = all_cases()["T13_en"]["tools"][0]
-        basic = all_cases()["T01_en"]["tools"][0]
+        optional = all_cases()["T13_en"].tools[0]
+        basic = all_cases()["T01_en"].tools[0]
         assert function_name(optional) == "get_current_weather"
         assert function_name(basic) == "get_current_weather"
         assert "district" in schema_properties(optional)
@@ -217,38 +217,38 @@ class TestRequiredArgumentsAreNotSuccessfulObservations:
 
 
 class TestCurrentWeather:
-    def test_odd_trial_returns_fixture_temperature_and_unit(self, weather_tokens: dict[str, str]) -> None:
-        payload = _json("get_current_weather", {"city": "Wrocław"}, {"repeat": 0})
-        assert payload["temperature"] == float(weather_tokens["TOKEN_WEATHER_ODD"])
-        assert payload["unit"] == weather_tokens["TOKEN_WEATHER_ODD_UNIT"]
+    def test_wroclaw_returns_celsius_fixture(self, weather_tokens: dict[str, str]) -> None:
+        payload = _json("get_current_weather", {"city": "Wrocław"})
+        assert payload["temperature"] == float(weather_tokens["TOKEN_WEATHER_C"])
+        assert payload["unit"] == weather_tokens["TOKEN_WEATHER_C_UNIT"]
         assert payload["sky"]
 
-    def test_even_trial_returns_fixture_temperature_and_unit(self, weather_tokens: dict[str, str]) -> None:
-        payload = _json("get_current_weather", {"city": "London"}, {"repeat": 1})
-        assert payload["temperature"] == float(weather_tokens["TOKEN_WEATHER_EVEN"])
-        assert payload["unit"] == weather_tokens["TOKEN_WEATHER_EVEN_UNIT"]
+    def test_new_york_returns_fahrenheit_fixture(self, weather_tokens: dict[str, str]) -> None:
+        payload = _json("get_current_weather", {"city": "New York"})
+        assert payload["temperature"] == float(weather_tokens["TOKEN_WEATHER_F"])
+        assert payload["unit"] == weather_tokens["TOKEN_WEATHER_F_UNIT"]
 
-    def test_observation_substrings_match_the_payload_for_the_same_trial(
+    def test_observation_substrings_match_the_payload_for_the_city(
         self, weather_tokens: dict[str, str]
     ) -> None:
-        for repeat in (0, 1, 2, 3):
-            payload = weather_payload(repeat)
-            needles = weather_required_substrings(repeat)
+        for city, temp_key, unit_key in (
+            ("Wrocław", "TOKEN_WEATHER_C", "TOKEN_WEATHER_C_UNIT"),
+            ("New York", "TOKEN_WEATHER_F", "TOKEN_WEATHER_F_UNIT"),
+            ("London", "TOKEN_WEATHER_C", "TOKEN_WEATHER_C_UNIT"),
+        ):
+            payload = weather_payload(city)
+            needles = weather_required_substrings(city)
             blob = json.dumps(payload, ensure_ascii=False)
             for needle in needles:
                 assert needle in blob
-            if repeat % 2 == 0:
-                assert weather_tokens["TOKEN_WEATHER_ODD"] in needles
-                assert weather_tokens["TOKEN_WEATHER_ODD_UNIT"] in needles
-            else:
-                assert weather_tokens["TOKEN_WEATHER_EVEN"] in needles
-                assert weather_tokens["TOKEN_WEATHER_EVEN_UNIT"] in needles
+            assert weather_tokens[temp_key] in needles
+            assert weather_tokens[unit_key] in needles
 
     def test_unknown_registry_city_returns_error_instead_of_weather(self) -> None:
         payload = execute_mock(
             "get_current_weather",
             {"city": "Zxxyyq"},
-            {"error_cities": ["Zxxyyq"], "repeat": 0},
+            {"error_cities": ["Zxxyyq"]},
         )
         assert payload == TOKEN_ERROR
         data = json.loads(payload)
@@ -259,22 +259,21 @@ class TestCurrentWeather:
         payload = _json(
             "get_current_weather",
             {"city": "London"},
-            {"error_cities": ["Zxxyyq"], "repeat": 0},
+            {"error_cities": ["Zxxyyq"]},
         )
         assert "error" not in payload
         assert "temperature" in payload
 
-    def test_optional_district_does_not_change_the_trial_observation_tokens(
+    def test_optional_district_does_not_change_the_city_observation_tokens(
         self, weather_tokens: dict[str, str]
     ) -> None:
         with_district = _json(
             "get_current_weather",
-            {"city": "London", "district": "Westminster"},
-            {"repeat": 1},
+            {"city": "New York", "district": "Manhattan"},
         )
-        without = _json("get_current_weather", {"city": "London"}, {"repeat": 1})
+        without = _json("get_current_weather", {"city": "New York"})
         assert with_district["temperature"] == without["temperature"]
-        assert with_district["unit"] == weather_tokens["TOKEN_WEATHER_EVEN_UNIT"]
+        assert with_district["unit"] == weather_tokens["TOKEN_WEATHER_F_UNIT"]
 
 
 class TestForecastNewsAndTime:

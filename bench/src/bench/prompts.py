@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Any
+from typing import Any, cast, get_args
 
-KNOWN_PROMPT_VARIANTS = ("neutral", "helpful", "instructed", "harness")
+from bench.spec import Case, PromptVariant
+
+KNOWN_PROMPT_VARIANTS = get_args(PromptVariant)
 
 SYS_NEUTRAL = "You are a helpful assistant."
 
@@ -25,6 +27,7 @@ Never invent tool names. Only use tools that are provided.
 Never invent argument values. 
 Use values provided by the user or values that are unambiguous from the conversation and necessary to complete the task.
 You may coerce such values into the type or format required by the tool. You may not alter names, IDs, or other literals.
+You may not alter in any way values returned by the tool when returning them to the user.
 
 Do not add optional arguments unless they are necessary to complete the task.
 Include an optional argument only when it is necessary to complete the task and its value is unambiguous from the conversation.
@@ -46,7 +49,7 @@ POLICY_CONFIRM = (
 )
 
 
-def variant_system_text(name: str, cfg: dict[str, Any]) -> str:
+def variant_system_text(name: PromptVariant, cfg: dict[str, Any]) -> str:
     if name == "neutral":
         return ""
     if name == "helpful":
@@ -64,36 +67,39 @@ def variant_system_text(name: str, cfg: dict[str, Any]) -> str:
     raise ValueError(f"unknown prompt variant {name!r}; expected one of {KNOWN_PROMPT_VARIANTS}")
 
 
-def selected_prompt_variants(cfg: dict[str, Any], override: list[str] | None = None) -> list[tuple[str, str]]:
+def selected_prompt_variants(cfg: dict[str, Any], override: list[str] | None = None) -> list[tuple[PromptVariant, str]]:
     names = list(override) if override else list(cfg.get("prompt_variants") or ["neutral"])
     if not names:
         names = ["neutral"]
-    out: list[tuple[str, str]] = []
+    out: list[tuple[PromptVariant, str]] = []
     seen: set[str] = set()
     for raw in names:
         name = str(raw).strip()
         if not name or name in seen:
             continue
         seen.add(name)
-        out.append((name, variant_system_text(name, cfg)))
+        if name not in KNOWN_PROMPT_VARIANTS:
+            raise ValueError(f"unknown prompt variant {name!r}; expected one of {KNOWN_PROMPT_VARIANTS}")
+        variant = cast(PromptVariant, name)
+        out.append((variant, variant_system_text(variant, cfg)))
     if not out:
         raise ValueError("no prompt variants selected")
     return out
 
 
-def apply_prompt_variant(case: dict[str, Any], system_text: str) -> dict[str, Any]:
+def apply_prompt_variant(case: Case, system_text: str) -> Case:
     c = deepcopy(case)
-    extra = str(c.get("policy_suffix") or "").strip()
+    extra = str(c.policy_suffix or "").strip()
     sys = (system_text or "").strip()
     if extra:
         sys = f"{sys} {extra}".strip() if sys else extra
-    tail = c.get("messages_after_system")
+    tail = c.messages_after_system
     if tail:
         messages = list(tail)
     else:
-        messages = [{"role": "user", "content": c.get("prompt") or ""}]
+        messages = [{"role": "user", "content": c.prompt or ""}]
     if sys:
         messages = [{"role": "system", "content": sys}] + messages
-    c["messages"] = messages
-    c["system"] = sys
+    c.messages = messages
+    c.system = sys
     return c

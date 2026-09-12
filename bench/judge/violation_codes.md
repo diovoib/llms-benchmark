@@ -11,11 +11,9 @@ Use only these strings. Do not invent codes.
 | BAD_JSON_TYPE | yes | JSON type mismatch (string `"21"` vs integer `21`, `"true"` vs boolean). |
 | ENUM_OUT_OF_RANGE | yes | Value not in schema enum. |
 | DUPLICATE_CALL | yes | Same tool name twice in one assistant turn. |
-| LEAKED_TOOL_FORMAT | yes | `content` contains `<tool_call>`, `<invoke`, `<function`, or `[TOOL_CALL]`. |
-| GUESSED_REQUIRED_ARG | yes | Required argument filled with a value the user did not give (T04/T12). |
+| LEAKED_TOOL_FORMAT | yes | Assistant `content` contains a native tool-template marker (`<tool_call>`, `<|tool_call|>`, `<tools>`, `[TOOL_CALLS]`, `<|python_tag|>`, `<invoke`, `<function`, `tool call: {`, …). |
 | IGNORED_OBSERVATION | yes | Final text missing required observation token, or success claimed after error-only tools. |
 | NO_STOP | yes | Agent loop still emitting tool_calls at max_steps; or C01 ended without `FINAL_REVIEW: OK` / `FINAL_REVIEW: NOK` (including `finish_reason=length` / context overflow). |
-| SIDE_EFFECT_WITHOUT_CONFIRM | yes | Called delete_file / send_mail / wipe_disk without prior confirmation. |
 | INVENTED_API | hidden tests | Request path or JSON keys outside the given contract. |
 | SPEC_ITEM_MISSING | hidden tests | Spec id failed, or `tool_client.py` missing/unparseable. |
 | REGRESSION | unused | Leftover from the old multi-round coding harness. |

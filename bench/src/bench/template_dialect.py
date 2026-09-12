@@ -6,6 +6,8 @@ import re
 import string
 from typing import Any, Callable
 
+from bench.spec import Case
+
 
 CALL_SENTINEL = "PREFLIGHT_TOPIC_ZXQ9"
 RESULT_SENTINEL = "PREFLIGHT_TOOL_RESULT_ZXQ9"
@@ -20,9 +22,14 @@ NATIVE_MARKERS = (
     "</tools>",
     "[TOOL_CALLS]",
     "[TOOL_RESULTS]",
+    "[TOOL_CALL]",
     "<|tool_call|>",
     "<|tool_response|>",
     "<|python_tag|>",
+    "<invoke",
+    "<function",
+    "tool call: {",
+    "tool call:{",
 )
 _LENGTH_RE = re.compile(r"length (\d+)", re.I)
 _ALTERNATE_RE = re.compile(r"alternat", re.I)
@@ -52,20 +59,20 @@ STRUCTURES = OPENAI_STRUCTURES + OTHER_STRUCTURES
 PROBE_SHAPES = ("simple", "padded", "parallel")
 
 
-def case_needs_history_dialect(case: dict[str, Any]) -> bool:
-    if case.get("messages_after_system"):
+def case_needs_history_dialect(case: Case) -> bool:
+    if case.messages_after_system:
         return True
-    if int(case.get("max_steps") or 1) > 1:
+    if int(case.max_steps or 1) > 1:
         return True
-    return bool(case.get("followup_user"))
+    return bool(case.followup_user)
 
 
-def case_needs_padded_history(case: dict[str, Any]) -> bool:
+def case_needs_padded_history(case: Case) -> bool:
     """T16 (history already has assistant-after-tool) and A06 (follow-up after a tool round)."""
-    return bool(case.get("messages_after_system") or case.get("followup_user"))
+    return bool(case.messages_after_system or case.followup_user)
 
 
-def dialect_skip_reason(case: dict[str, Any], dialect: dict[str, Any] | None) -> str | None:
+def dialect_skip_reason(case: Case, dialect: dict[str, Any] | None) -> str | None:
     if not case_needs_history_dialect(case):
         return None
     dialect = dialect or {}

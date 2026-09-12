@@ -284,11 +284,11 @@ def backfill_case_md(root: Path) -> None:
         case = catalog.get(cid)
         if not case:
             continue
-        purpose = case.get("purpose")
-        expected = case.get("expected_answer")
+        purpose = case.purpose
+        expected = case.expected_result
         if not purpose or not expected:
             continue
-        write_case_md(case_dir / "CASE.md", case_id=cid, purpose=str(purpose), expected_answer=str(expected))
+        write_case_md(case_dir / "CASE.md", case_id=cid, purpose=str(purpose), expected_result=str(expected))
 
 
 def backfill_judge_kit(root: Path) -> None:

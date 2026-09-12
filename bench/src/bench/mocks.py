@@ -5,9 +5,10 @@ from typing import Any
 
 # Distinctive values so observation-use is a substring check, not a judge call.
 # Weather unit lives only in the payload field `unit` (not in the catalog or key name).
-# 1-based trial index (stdout 1/N): even → 14.3 and °C; odd → 271.2 and K.
-WEATHER_EVEN = {"temperature": 14.3, "unit": "°C", "sky": "cloudy"}
-WEATHER_ODD = {"temperature": 271.2, "unit": "K", "sky": "cloudy"}
+# Wrocław and other cities → 14.3 °C; New York → 57.4 °F. Repeat index does not change this.
+WEATHER_C = {"temperature": 14.3, "unit": "°C", "sky": "cloudy"}
+WEATHER_F = {"temperature": 57.4, "unit": "°F", "sky": "cloudy"}
+WEATHER_F_CITIES = {"new york"}
 TOKEN_FORECAST = "FORECAST_RAIN_TOKEN_QK3"
 TOKEN_PLACE_ID = "PLACE_ID_WROCLAW_991"
 TOKEN_PLACE_ID_LONDON = "PLACE_ID_LONDON_992"
@@ -45,18 +46,19 @@ NEWS_HEADLINES = [
 ]
 
 
-def weather_payload(repeat: int) -> dict[str, Any]:
-    pass_no = int(repeat) + 1
-    return dict(WEATHER_EVEN if pass_no % 2 == 0 else WEATHER_ODD)
+def weather_payload(city: str = "") -> dict[str, Any]:
+    if str(city).casefold() in WEATHER_F_CITIES:
+        return dict(WEATHER_F)
+    return dict(WEATHER_C)
 
 
-def weather_required_substrings(repeat: int) -> list[str]:
-    payload = weather_payload(repeat)
+def weather_required_substrings(city: str = "") -> list[str]:
+    payload = weather_payload(city)
     return [str(payload["temperature"]), str(payload["unit"])]
 
 
 def weather_claim_tokens() -> list[str]:
-    return [str(WEATHER_EVEN["temperature"]), str(WEATHER_ODD["temperature"])]
+    return [str(WEATHER_C["temperature"]), str(WEATHER_F["temperature"])]
 
 
 def place_id_for_city(city: str) -> str:
@@ -91,7 +93,7 @@ def execute_mock(name: str, arguments: dict[str, Any] | Any, extra: dict[str, An
         city = str(args.get("city", ""))
         if city in set(extra.get("error_cities") or []):
             return TOKEN_ERROR
-        return _dump(weather_payload(int(extra.get("repeat") or 0)))
+        return _dump(weather_payload(city))
     if name == "get_forecast":
         return _dump({"token": TOKEN_FORECAST, "city": args.get("city")})
     if name == "get_current_time":

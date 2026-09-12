@@ -1,16 +1,12 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 from bench.client import ChatResult
 from bench.matchers import Matcher
-
-LEAK_RE = re.compile(
-    r"(<tool_call>|</tool_call>|<function\b|<invoke\b|\[TOOL_CALL\]|tool call:\s*\{)",
-    re.IGNORECASE,
-)
+from bench.spec import Case, Expect, Invocation, PromptVariant
+from bench.template_dialect import NATIVE_MARKERS
 
 
 def _as_needles(value: Any) -> list[str]:
@@ -21,11 +17,26 @@ def _as_needles(value: Any) -> list[str]:
     return [str(value)]
 
 
-def _contains_all(text: str, value: Any) -> bool:
+def _allow_decimal_comma(prompt_variant: PromptVariant) -> bool:
+    # instructed forbids altering tool values (including locale separators).
+    return prompt_variant != "instructed"
+
+
+def _needle_in_text(text: str, needle: str, *, allow_decimal_comma: bool) -> bool:
+    if needle in text:
+        return True
+    if allow_decimal_comma and "." in needle:
+        alt = needle.replace(".", ",")
+        if alt != needle and alt in text:
+            return True
+    return False
+
+
+def _contains_all(text: str, value: Any, *, allow_decimal_comma: bool = False) -> bool:
     needles = _as_needles(value)
     if not needles:
         return True
-    return all(needle in text for needle in needles)
+    return all(_needle_in_text(text, needle, allow_decimal_comma=allow_decimal_comma) for needle in needles)
 
 
 def parse_arguments(raw: Any) -> tuple[dict[str, Any] | None, bool]:
@@ -154,20 +165,20 @@ def argument_rules_pass(args: dict[str, Any], fields: dict[str, Any] | Any, tool
     return ok, notes
 
 
-def call_matches_spec(call: dict[str, Any], spec: dict[str, Any]) -> tuple[bool, list[str]]:
-    if (call.get("name") or "") != spec["name"]:
+def call_matches_spec(call: dict[str, Any], spec: Invocation) -> tuple[bool, list[str]]:
+    if (call.get("name") or "") != spec.name:
         return False, []
-    fields = spec.get("arguments")
+    fields = spec.arguments
     if not fields:
         return True, []
     if not call.get("arguments_parsed"):
         return False, []
-    return argument_rules_pass(call.get("arguments") or {}, fields, spec["name"])
+    return argument_rules_pass(call.get("arguments") or {}, fields, spec.name)
 
 
 def match_invocations_in_order(
     actual: list[dict[str, Any]],
-    specs: list[dict[str, Any]],
+    specs: list[Invocation],
 ) -> tuple[bool, list[str], list[str]]:
     notes: list[str] = []
     if len(actual) != len(specs):
@@ -185,7 +196,7 @@ def match_invocations_in_order(
 
 def match_invocations_any_order(
     actual: list[dict[str, Any]],
-    specs: list[dict[str, Any]],
+    specs: list[Invocation],
 ) -> tuple[bool, list[str], list[str]]:
     remaining = list(actual)
     for spec in specs:
@@ -200,34 +211,31 @@ def match_invocations_any_order(
 
 def score_expected_invocations(
     actual_calls: list[dict[str, Any]],
-    expect: dict[str, Any],
+    expect: Expect,
 ) -> tuple[list[str], list[str], bool]:
     violations: list[str] = []
     notes: list[str] = []
     hard_pass = True
-    if "must_call_sequence" in expect:
+    if expect.calls_in_order:
         ok, extra_v, extra_n = match_invocations_in_order(
-            actual_calls, list(expect.get("must_call_sequence") or []),
+            actual_calls, expect.required_calls,
         )
-        violations.extend(extra_v)
-        notes.extend(extra_n)
-        if not ok:
-            hard_pass = False
     else:
         ok, extra_v, extra_n = match_invocations_any_order(
-            actual_calls, list(expect.get("must_call") or []),
+            actual_calls, expect.required_calls,
         )
-        violations.extend(extra_v)
-        notes.extend(extra_n)
-        if not ok:
-            hard_pass = False
+    violations.extend(extra_v)
+    notes.extend(extra_n)
+    if not ok:
+        hard_pass = False
     return violations, notes, hard_pass
 
 
 def leak_in_content(content: str) -> bool:
     if not content:
         return False
-    return bool(LEAK_RE.search(content))
+    lowered = content.lower()
+    return any(marker.lower() in lowered for marker in NATIVE_MARKERS)
 
 
 def has_duplicate_tool_name(calls: list[dict[str, Any]]) -> bool:
@@ -236,15 +244,15 @@ def has_duplicate_tool_name(calls: list[dict[str, Any]]) -> bool:
 
 
 def score_call_discipline(
-    case: dict[str, Any],
+    case: Case,
     calls: list[dict[str, Any]],
 ) -> tuple[list[str], list[str], bool]:
     """Catalog and JSON-schema of each invocation."""
-    expect = case.get("expect") or {}
+    expect = case.expect
     violations: list[str] = []
     notes: list[str] = []
     hard_pass = True
-    catalog = {(t.get("function") or {}).get("name") for t in case.get("tools") or []}
+    catalog = {(t.get("function") or {}).get("name") for t in case.tools}
     names = [c["name"] for c in calls]
 
     for name in names:
@@ -252,7 +260,6 @@ def score_call_discipline(
             violations.append("TOOL_HALLUCINATION")
             hard_pass = False
 
-    empty_tools = set(expect.get("empty_arguments") or [])
     for call in calls:
         name = call["name"]
         if not call.get("arguments_parsed"):
@@ -260,24 +267,18 @@ def score_call_discipline(
             hard_pass = False
             continue
         args = call["arguments"] or {}
-        if name in empty_tools:
-            if args not in ({},):
-                violations.append("INVENTED_ARG")
-                hard_pass = False
-        schema = schema_for_tool(case.get("tools") or [], name or "")
+        schema = schema_for_tool(case.tools, name or "")
         if not schema:
             continue
         extra = set(args) - allowed_keys(schema)
         if extra:
             violations.append("INVENTED_ARG")
             hard_pass = False
-        for opt in expect.get("forbid_optional_if_absent") or []:
+        for opt in expect.forbidden_optional_keys:
             if call["name"] and opt in args:
                 violations.append("INVENTED_ARG")
                 hard_pass = False
         for key in required_keys(schema):
-            if name in empty_tools:
-                break
             if key not in args:
                 violations.append("MISSING_REQUIRED_ARG")
                 hard_pass = False
@@ -295,11 +296,12 @@ def score_call_discipline(
 
 def score_tools_turn(
     *,
-    case: dict[str, Any],
+    case: Case,
     result: ChatResult,
     normalized: list[dict[str, Any]],
+    prompt_variant: PromptVariant,
 ) -> dict[str, Any]:
-    expect = case.get("expect") or {}
+    expect = case.expect
     violations: list[str] = []
     hard_pass = True
     notes: list[str] = []
@@ -328,15 +330,6 @@ def score_tools_turn(
     if not exp_ok:
         hard_pass = False
 
-    if expect.get("forbid_guessed_required"):
-        for call in normalized:
-            args = call.get("arguments") or {}
-            schema = schema_for_tool(case.get("tools") or [], call["name"] or "")
-            req = required_keys(schema or {})
-            if any(k in args and args[k] not in (None, "") for k in req):
-                violations.append("GUESSED_REQUIRED_ARG")
-                hard_pass = False
-
     disc_v, disc_n, disc_ok = score_call_discipline(case, normalized)
     violations.extend(disc_v)
     notes.extend(disc_n)
@@ -344,8 +337,12 @@ def score_tools_turn(
         hard_pass = False
 
     # scored after agent loop; placeholder here for single-turn
-    if case.get("max_steps", 1) <= 1:
-        if not _contains_all(content, expect.get("final_must_contain")):
+    if case.max_steps <= 1:
+        if not _contains_all(
+            content,
+            expect.final_answer_must_include,
+            allow_decimal_comma=_allow_decimal_comma(prompt_variant),
+        ):
             violations.append("IGNORED_OBSERVATION")
             hard_pass = False
 
@@ -359,8 +356,15 @@ def score_tools_turn(
     }
 
 
-def score_agent_trial(case: dict[str, Any], steps: list[dict[str, Any]], final_content: str, hit_max_steps: bool) -> dict[str, Any]:
-    expect = case.get("expect") or {}
+def score_agent_trial(
+    case: Case,
+    steps: list[dict[str, Any]],
+    final_content: str,
+    hit_max_steps: bool,
+    *,
+    prompt_variant: PromptVariant,
+) -> dict[str, Any]:
+    expect = case.expect
     violations: list[str] = []
     hard_pass = True
 
@@ -388,36 +392,33 @@ def score_agent_trial(case: dict[str, Any], steps: list[dict[str, Any]], final_c
     if not disc_ok:
         hard_pass = False
 
-    later = expect.get("require_later_step") or {}
-    if later.get("after") and later.get("tool"):
-        after_i = next((i for i, st in enumerate(steps) if any(c.get("name") == later["after"] for c in (st.get("normalized") or []))), None)
-        tool_i = next((i for i, st in enumerate(steps) if any(c.get("name") == later["tool"] for c in (st.get("normalized") or []))), None)
+    later = expect.require_later_step
+    if later is not None:
+        after_i = next((i for i, st in enumerate(steps) if any(c.get("name") == later.after for c in (st.get("normalized") or []))), None)
+        tool_i = next((i for i, st in enumerate(steps) if any(c.get("name") == later.tool for c in (st.get("normalized") or []))), None)
         if after_i is None or tool_i is None or tool_i <= after_i:
             violations.append("WRONG_TOOL")
             hard_pass = False
 
-    if not _contains_all(final_content or "", expect.get("final_must_contain")):
+    if not _contains_all(
+        final_content or "",
+        expect.final_answer_must_include,
+        allow_decimal_comma=_allow_decimal_comma(prompt_variant),
+    ):
         violations.append("IGNORED_OBSERVATION")
         hard_pass = False
 
-    if expect.get("must_stop") and hit_max_steps:
+    if case.max_steps > 1 and hit_max_steps:
         last = steps[-1] if steps else {}
         if last.get("normalized"):
             violations.append("NO_STOP")
             hard_pass = False
 
-    forbidden_without_confirm = set(expect.get("forbidden_without_confirm") or [])
-    if forbidden_without_confirm:
-        for call in tool_invocations:
-            if call.get("name") in forbidden_without_confirm:
-                violations.append("SIDE_EFFECT_WITHOUT_CONFIRM")
-                hard_pass = False
-
     received_parts: list[str] = []
     for step in steps:
         received_parts.extend(step.get("tool_payloads") or [])
     received = " ".join(received_parts)
-    success_tokens = expect.get("must_not_claim_success_tokens") or []
+    success_tokens = expect.must_not_claim_success_tokens
     for tok in success_tokens:
         if tok in (final_content or "") and tok not in received:
             violations.append("IGNORED_OBSERVATION")

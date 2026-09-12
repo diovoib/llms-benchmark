@@ -6,6 +6,7 @@ import json
 import signal
 import sys
 import threading
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -19,7 +20,7 @@ from bench.hard_score import (
     score_agent_trial,
     score_tools_turn,
 )
-from bench.mocks import execute_mock, weather_claim_tokens, weather_required_substrings
+from bench.mocks import execute_mock
 from bench.preflight import run_preflight
 from bench.results_io import (
     RawWireLog,
@@ -43,6 +44,7 @@ from bench.progress import (
     trial_label,
 )
 from bench.prompts import apply_prompt_variant, selected_prompt_variants
+from bench.spec import Case, PromptVariant
 from bench.suites.cases import all_cases
 from bench.summary import snapshot_prompts, write_summary_tree
 from bench.template_dialect import (
@@ -95,7 +97,7 @@ def selected_case_ids(cfg: dict[str, Any], suites: list[str]) -> list[str]:
                     ids.append(cid)
                 continue
             case = catalog.get(cid)
-            if not case or case["suite"] != name:
+            if not case or case.suite != name:
                 continue
             seen.add(cid)
             ids.append(cid)
@@ -123,15 +125,9 @@ def format_messages(messages: list[dict[str, Any]]) -> str:
     return "\n".join(chunks)
 
 
-def bind_weather_expect(case: dict[str, Any], repeat: int) -> dict[str, Any]:
-    expect = dict(case.get("expect") or {})
-    if expect.pop("final_must_contain_weather", False):
-        expect["final_must_contain"] = weather_required_substrings(repeat)
-    if expect.pop("must_not_claim_weather", False):
-        expect["must_not_claim_success_tokens"] = weather_claim_tokens()
-    out = dict(case)
-    out["expect"] = expect
-    return out
+def bind_weather_expect(case: Case, repeat: int = 0) -> Case:
+    """Copy the case. Observation tokens are set on the case Expect, not bound here."""
+    return deepcopy(case)
 
 
 def mark_interrupted_if_present(paths: list[Path]) -> None:
@@ -152,9 +148,10 @@ def mark_interrupted_if_present(paths: list[Path]) -> None:
 def run_tool_or_agent_case(
     *,
     client: BenchClient,
-    case: dict[str, Any],
+    case: Case,
     sampler: dict[str, Any],
     preflight: dict[str, Any],
+    prompt_variant: PromptVariant,
     repeat: int = 0,
     max_tokens: int | None = None,
     request_timeout_s: float | None = None,
@@ -167,17 +164,17 @@ def run_tool_or_agent_case(
     dialect = (preflight or {}).get("template_dialect")
     id_map: dict[str, str] = {}
     messages = coalesce_history(
-        adapt_messages(json.loads(json.dumps(case["messages"])), dialect, id_map),
+        adapt_messages(json.loads(json.dumps(case.messages)), dialect, id_map),
         dialect,
     )
-    extra_mock = {"error_cities": case.get("error_cities") or [], "repeat": repeat}
+    extra_mock = {"error_cities": list(case.error_cities), "repeat": repeat}
     steps = []
     total_latency = 0.0
     prompt_tokens = 0
     completion_tokens = 0
     ttf = None
-    max_steps = int(case.get("max_steps") or 1)
-    followup = case.get("followup_user")
+    max_steps = int(case.max_steps or 1)
+    followup = case.followup_user
     followup_sent = False
 
     def _chat(step_i: int):
@@ -210,9 +207,9 @@ def run_tool_or_agent_case(
         try:
             return client.chat(
                 messages,
-                tools=case.get("tools"),
-                tool_choice=case.get("tool_choice", "auto"),
-                parallel_tool_calls=case.get("parallel_tool_calls"),
+                tools=case.tools,
+                tool_choice=case.tool_choice,
+                parallel_tool_calls=case.parallel_tool_calls,
                 **kwargs,
             )
         finally:
@@ -230,8 +227,13 @@ def run_tool_or_agent_case(
         if normalized and ttf is None:
             ttf = result.latency_s
         turn_score = {}
-        if case["suite"] == "tools" and max_steps <= 1:
-            turn_score = score_tools_turn(case=case, result=result, normalized=normalized)
+        if case.suite == "tools" and max_steps <= 1:
+            turn_score = score_tools_turn(
+                case=case,
+                result=result,
+                normalized=normalized,
+                prompt_variant=prompt_variant,
+            )
         step_rec = {
             "result": {
                 "ok": result.ok,
@@ -309,8 +311,10 @@ def run_tool_or_agent_case(
         if not st.get("normalized"):
             final_content = st.get("content") or ""
             break
-    if case["suite"] == "agent" or max_steps > 1:
-        score = score_agent_trial(case, steps, final_content, hit_max)
+    if case.suite == "agent" or max_steps > 1:
+        score = score_agent_trial(
+            case, steps, final_content, hit_max, prompt_variant=prompt_variant
+        )
     else:
         score = steps[0]["score"] if steps else {
             "hard_pass": False,
@@ -321,9 +325,9 @@ def run_tool_or_agent_case(
 
     last = steps[-1] if steps else {}
     ncalls = last.get("normalized") or []
-    mk = mode_key(ncalls if case["suite"] == "tools" else [
+    mk = mode_key(ncalls if case.suite == "tools" else [
         c for st in steps for c in (st.get("normalized") or [])
-    ], final_content if case["suite"] == "agent" else (steps[0].get("content") if steps else ""), last.get("result", {}).get("finish_reason"))
+    ], final_content if case.suite == "agent" else (steps[0].get("content") if steps else ""), last.get("result", {}).get("finish_reason"))
 
     return {
         "ok_run": True,
@@ -554,14 +558,14 @@ def run_benchmark(
                         skip_set.update(
                             cid
                             for cid in tool_case_ids
-                            if (catalog.get(cid) or {}).get("invalidate_if_no_parallel")
+                            if (c := catalog.get(cid)) is not None and c.invalidate_if_no_parallel
                         )
                     if tool_case_ids:
                         dialect = pre.get("template_dialect") or {}
                         skip_set.update(
                             cid
                             for cid in tool_case_ids
-                            if dialect_skip_reason(catalog.get(cid) or {}, dialect)
+                            if (c := catalog.get(cid)) is not None and dialect_skip_reason(c, dialect)
                         )
                     if skip_set:
                         print_skipping(sorted(skip_set))
@@ -593,7 +597,7 @@ def run_benchmark(
                                 t0 = line_start(
                                     trial_label(
                                         case_id=cid,
-                                        suite=catalog[cid]["suite"],
+                                        suite=catalog[cid].suite,
                                         profile=profile_name,
                                         variant=f"{variant_name}@t{temp}",
                                         repeat=0,
@@ -610,6 +614,7 @@ def run_benchmark(
                                         case=bound,
                                         sampler=sampler,
                                         preflight=pre,
+                                        prompt_variant=variant_name,
                                         repeat=0,
                                         max_tokens=sweep_max_tokens,
                                         request_timeout_s=sweep_timeout,
@@ -634,18 +639,18 @@ def run_benchmark(
                     for cid in tool_case_ids:
                         case = catalog[cid]
                         bound = apply_prompt_variant(case, system_text)
-                        nrep = repeats_for(cfg, case["suite"], profile_name)
-                        suite_name = case["suite"]
+                        nrep = repeats_for(cfg, case.suite, profile_name)
+                        suite_name = case.suite
                         case_timeout = _suite_timeout(cfg, suite_name)
                         case_max_tokens = _suite_max_tokens(cfg, suite_name)
                         tdir = dest / "cases" / cid
                         tdir.mkdir(parents=True, exist_ok=True)
-                        if case.get("purpose") and case.get("expected_answer"):
+                        if case.purpose and case.expected_result:
                             write_case_md(
                                 tdir / "CASE.md",
                                 case_id=cid,
-                                purpose=str(case["purpose"]),
-                                expected_answer=str(case["expected_answer"]),
+                                purpose=str(case.purpose),
+                                expected_result=str(case.expected_result),
                             )
                         for rep in range(nrep):
                             seed = choose_seed(profile, cid, rep, variant_name)
@@ -695,6 +700,7 @@ def run_benchmark(
                                     case=bound,
                                     sampler=sampler,
                                     preflight=pre,
+                                    prompt_variant=variant_name,
                                     repeat=rep,
                                     max_tokens=case_max_tokens,
                                     request_timeout_s=case_timeout,

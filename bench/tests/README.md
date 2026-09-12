@@ -50,17 +50,17 @@ The live loop substitutes an empty object whenever parsed arguments are missing,
 
 ### Current weather
 
-**test_odd_trial_returns_fixture_temperature_and_unit.** The first trial of a weather case (repeat index 0) must return the odd-trial temperature and unit published in `fixtures/tokens.json`. Observation scoring looks for those exact tokens in the model's final answer.
+**test_wroclaw_returns_celsius_fixture.** A current-weather call for Wrocław must return the Celsius fixture published in `fixtures/tokens.json` (`14.3` and `°C`). Observation scoring looks for those tokens in the model's final answer.
 
-**test_even_trial_returns_fixture_temperature_and_unit.** The next trial (repeat index 1) must return the even-trial temperature and unit from the same fixture file. If the fixture unit and the live payload disagree, observation checks will pass or fail for the wrong reason.
+**test_new_york_returns_fahrenheit_fixture.** A current-weather call for New York must return the Fahrenheit fixture from the same file (`57.4` and `°F`). Repeat index must not switch the unit.
 
-**test_observation_substrings_match_the_payload_for_the_same_trial.** The substrings the scorer requires in the final answer must actually appear in the weather payload for that trial, and they must be the fixture tokens for the odd or even trial. This catches drift between the fixture file, the weather function, and the observation checker.
+**test_observation_substrings_match_the_payload_for_the_city.** The substrings the scorer requires in the final answer must actually appear in the weather payload for that city, and they must be the fixture tokens for Wrocław/Celsius or New York/Fahrenheit. This catches drift between the fixture file, the weather function, and the observation checker.
 
 **test_unknown_registry_city_returns_error_instead_of_weather.** When the case marks a city as unknown (the `Zxxyyq` error-handling case), the weather function must return an `UNKNOWN_CITY` error and must not invent a temperature. A fake temperature would let the model “succeed” after a registry miss.
 
 **test_ordinary_city_is_not_turned_into_an_unknown_city_error.** London and Wrocław are ordinary indexed cities. They must still receive a weather payload even when some other city is listed as unknown for that case.
 
-**test_optional_district_does_not_change_the_trial_observation_tokens.** Supplying an optional district must not change the trial's temperature or unit. Observation scoring is tied to the trial index, not to extra geographic detail.
+**test_optional_district_does_not_change_the_city_observation_tokens.** Supplying an optional district must not change that city's temperature or unit. Observation scoring is tied to the city, not to extra geographic detail.
 
 ### Forecast, news, and time
 
@@ -140,199 +140,197 @@ These cases feed synthetic transcripts into the mechanical scorer. They check ev
 
 ### Argument parsing
 
-**test_object_string_parses_to_a_dictionary.** A JSON object string in `arguments` must parse to a dictionary so later matching can see the keys.
+**test_parse_arguments_json_object_string.** A JSON object string in `arguments` must parse to a dictionary so later matching can see the keys.
 
-**test_already_parsed_object_is_accepted.** If the server already supplied an object, the scorer must accept it without requiring a second JSON encoding.
+**test_parse_arguments_dict.** If the server already supplied an object, the scorer must accept it without requiring a second JSON encoding.
 
-**test_empty_string_null_and_non_objects_are_not_argument_objects.** Empty strings, null, arrays, numbers, booleans, quoted strings, and truncated JSON such as `{` must be treated as unparsed. Live T18 `INFRA_ERROR` rows start from arguments equal to `{`.
+**test_parse_arguments_empty_null_non_objects.** Empty strings, null, arrays, numbers, booleans, quoted strings, and truncated JSON such as `{` must be treated as unparsed. Live T18 `INFRA_ERROR` rows start from arguments equal to `{`.
 
-**test_normalize_records_unparsed_truncated_json.** Normalizing a truncated place-details call must keep the tool name, mark arguments as unparsed, and preserve the raw `{` text. Dropping that information is how a JSON error becomes an empty lookup and then a server 500.
+**test_normalize_truncated_place_details_json.** Normalizing a truncated place-details call must keep the tool name, mark arguments as unparsed, and preserve the raw `{` text. Dropping that information is how a JSON error becomes an empty lookup and then a server 500.
 
-**test_boolean_is_not_an_integer_json_type.** JSON `true` is not an integer. The thermostat case requires an integer Celsius value; coercing a boolean would hide a type error. JSON `21.0` is a number, not an integer, so it must also fail this check.
+**test_json_type_ok_integer.** JSON `true` is not an integer. The thermostat case requires an integer Celsius value; coercing a boolean would hide a type error. JSON `21.0` is a number, not an integer, so it must also fail this check.
 
-**test_json_type_ok_for_number_array_and_object.** A JSON number may be an integer or a float, but not a boolean. An array must be a JSON list. An object must be a JSON dictionary. Nested event fields (`when`, `attendees`) and thermostat temperature go through this helper.
+**test_json_type_ok_number_array_object.** A JSON number may be an integer or a float, but not a boolean. An array must be a JSON list. An object must be a JSON dictionary. Nested event fields (`when`, `attendees`) and thermostat temperature go through this helper.
 
 ### Hour matching for calendar events
 
 The documented clock forms are those in the hour-parser contract: integer `9`, `'9:00'` meaning hour 9, and `'00:09'` meaning hour 0 because the minutes are not the hour. Dotted `9.00` is not a documented clock form. Treating it as hour 9 would be a second, unpublished spelling.
 
-**test_clock_values_that_mean_hour_nine_or_documented_equivalents.** Integer `9`, `9:00`, `09:00`, `00:09` as hour 0, `9am`, `9 pm`, `12am`, and `12pm` must all mean a valid hour of day. The standup event cases accept integer hours and those ordinary clock spellings.
+**test_parse_hour_documented_clock_forms.** Integer `9`, `9:00`, `09:00`, `00:09` as hour 0, `9am`, `9 pm`, `12am`, and `12pm` must all mean a valid hour of day. The standup event cases accept integer hours and those ordinary clock spellings.
 
-**test_invalid_hours_do_not_match_a_calendar_slot.** Null, booleans, 24, negative hours, the word `noon`, dotted `9.00`, and a wrong date must not match a 09:00 slot on 2026-09-07. A `when` object that has the date but omits `hour` also fails this matcher.
+**test_parse_hour_invalid_values.** Null, booleans, 24, negative hours, the word `noon`, dotted `9.00`, and a wrong date must not match a 09:00 slot on 2026-09-07. A `when` object that has the date but omits `hour` also fails this matcher.
 
-**test_match_null_allows_missing_or_json_null_but_not_empty_string.** A missing key or JSON null is null. An empty string is a present empty value, not null. That distinction matters for optional versus required arguments.
+**test_match_null_and_match_empty.** A missing key or JSON null is null. An empty string is a present empty value, not null. That distinction matters for optional versus required arguments.
 
 ### Wrong tool and call sequence
 
-**test_required_weather_call_with_the_prompt_city_passes.** The basic English weather case must pass when the model calls current weather for London, which is the city named in the prompt.
+**test_t01_en_weather_new_york.** The basic English weather case must pass when the model calls current weather for New York, which is the city named in the prompt.
 
-**test_weather_call_with_the_wrong_city_is_wrong_tool.** Calling current weather for a city the user did not name must be `WRONG_TOOL`.
+**test_t01_en_weather_paris.** Calling current weather for a city the user did not name must be `WRONG_TOOL`.
 
-**test_calling_any_tool_on_a_no_tool_math_case_is_wrong_tool.** The arithmetic case forbids tools, including the catalog calculator. Calling calculator is `WRONG_TOOL`.
+**test_t03_en_calculator.** The arithmetic case forbids tools, including the catalog calculator. Calling calculator is `WRONG_TOOL`.
 
-**test_math_case_passes_when_no_tool_is_called.** The no-tool math case only requires that no function is called. Mechanical scoring does not check that the prose contains the sum `801`. An answer of `I don't know` with no tool calls must pass for the same reason that `801` with no tool calls must pass.
+**test_t03_en_no_tools.** The no-tool math case only requires that no function is called. Mechanical scoring does not check that the prose contains the sum `801`. An answer of `I don't know` with no tool calls must pass for the same reason that `801` with no tool calls must pass.
 
-**test_horoscope_must_not_call_weather_or_news.** A horoscope request must not be answered by calling weather or news. Those are the only tools on that case; calling either is `WRONG_TOOL`.
+**test_t09_en_get_news.** A horoscope request must not be answered by calling weather or news. Those are the only tools on that case; calling either is `WRONG_TOOL`.
 
-**test_tool_choice_none_still_fails_if_a_native_tool_call_is_emitted.** When the API forbids tools, a native weather call is still `WRONG_TOOL`. The model must answer in text.
+**test_t08_en_native_weather_call.** When the API forbids tools, a native weather call is still `WRONG_TOOL`. The model must answer in text.
 
-**test_parallel_weather_and_news_pass_in_either_order.** The parallel case must pass whether weather or news is listed first, as long as both required calls are present with the right city.
+**test_t07_weather_and_news_either_order.** The parallel case must pass whether weather or news is listed first, as long as both required calls are present with the right city.
 
-**test_parallel_case_fails_when_one_of_the_two_required_tools_is_missing.** Calling only weather on the parallel case is `WRONG_TOOL`.
+**test_t07_weather_only.** Calling only weather on the parallel case is `WRONG_TOOL`.
 
-**test_create_event_must_precede_send_mail_in_the_same_turn.** The ordered one-turn case must pass when create-event comes before send-mail, and must be `WRONG_TOOL` when the order is reversed.
+**test_t17_en_event_and_mail_order.** The ordered one-turn case must pass when create-event comes before send-mail, and must be `WRONG_TOOL` when the order is reversed.
 
-**test_english_place_chain_requires_the_london_id_not_the_wroclaw_id.** The English place-chain case must require the London place id and the London observation phrases from the place-details helper. Requiring the Wrocław id would make a correct London chain fail.
+**test_t18_en_expect_london_place_id.** The English place-chain case must require the London place id and the London observation phrases from the place-details helper. Requiring the Wrocław id would make a correct London chain fail.
 
-**test_place_details_in_the_same_turn_as_search_fails_the_later_step_rule.** Search and place details in the same assistant turn must fail the later-step rule. The model has to wait for the search observation before it can know the id.
+**test_t18_en_search_and_details_same_turn.** Search and place details in the same assistant turn must fail the later-step rule. The model has to wait for the search observation before it can know the id.
 
-**test_search_then_place_details_on_a_later_step_passes_when_needles_are_quoted.** Search on one step, place details with the returned London id on a later step, and a final answer that quotes `184` and `arches` must pass.
+**test_t18_en_search_then_details_with_needles.** Search on one step, place details with the returned London id on a later step, and a final answer that quotes `184` and `arches` must pass.
 
-**test_search_then_place_details_on_a_later_step_passes_for_wroclaw.** The Polish place-chain case is the same later-step contract with the Wrocław place id and the Wrocław observation phrases from the place-details helper. A London-only chain test would leave the Polish twin unexercised.
+**test_t18_pl_search_then_details_with_needles.** The Polish place-chain case is the same later-step contract with the Wrocław place id and the Wrocław observation phrases from the place-details helper. A London-only chain test would leave the Polish twin unexercised.
 
 ### Catalog and JSON-schema discipline
 
-**test_name_outside_the_case_catalog_is_tool_hallucination.** Calling `get_horoscope` when that name is not in the case catalog is `TOOL_HALLUCINATION`.
+**test_t01_en_get_horoscope.** Calling `get_horoscope` when that name is not in the case catalog is `TOOL_HALLUCINATION`.
 
-**test_forecast_instead_of_current_weather_is_wrong_tool_not_hallucination.** Calling forecast when both weather and forecast are in the catalog, but only current weather is required, is `WRONG_TOOL` and must not be labelled a hallucination.
+**test_t14_en_forecast.** Calling forecast when both weather and forecast are in the catalog, but only current weather is required, is `WRONG_TOOL` and must not be labelled a hallucination.
 
-**test_duplicate_identical_calls_in_one_turn_are_duplicate_call.** Two identical weather calls in one turn must be `DUPLICATE_CALL`. The closed violation list documents this code as mechanical.
+**test_t15_en_two_identical_weather_calls.** Two identical weather calls in one turn must be `DUPLICATE_CALL`. The closed violation list documents this code as mechanical.
 
-**test_two_weather_calls_with_different_cities_are_still_duplicate_call.** The closed list defines `DUPLICATE_CALL` as the same tool name twice in one assistant turn, not as the same payload twice. Two current-weather calls, one for London and one for Paris, must still be `DUPLICATE_CALL`. A checker that only compared identical argument objects would miss that path.
+**test_t15_en_two_weather_calls_different_cities.** The closed list defines `DUPLICATE_CALL` as the same tool name twice in one assistant turn, not as the same payload twice. Two current-weather calls, one for London and one for Paris, must still be `DUPLICATE_CALL`. A checker that only compared identical argument objects would miss that path.
 
-**test_missing_required_thermostat_field_is_missing_required_arg.** Omitting thermostat `mode` is `MISSING_REQUIRED_ARG`.
+**test_t05_thermostat_without_mode.** Omitting thermostat `mode` is `MISSING_REQUIRED_ARG`.
 
-**test_string_temperature_is_bad_json_type.** Sending `"21"` instead of integer `21` is `BAD_JSON_TYPE`.
+**test_t05_thermostat_string_temperature.** Sending `"21"` instead of integer `21` is `BAD_JSON_TYPE`.
 
-**test_boolean_true_is_not_accepted_as_integer_temperature.** Sending JSON `true` as the temperature is `BAD_JSON_TYPE`.
+**test_t05_thermostat_boolean_temperature.** Sending JSON `true` as the temperature is `BAD_JSON_TYPE`.
 
-**test_float_temperature_is_not_an_integer.** Sending JSON `21.0` as the thermostat temperature is `BAD_JSON_TYPE`. The schema type is integer; a float that happens to be whole must not be accepted on that path.
+**test_t05_thermostat_float_temperature.** Sending JSON `21.0` as the thermostat temperature is `BAD_JSON_TYPE`. The schema type is integer; a float that happens to be whole must not be accepted on that path.
 
-**test_correct_thermostat_types_pass.** Integer 21, boolean true, and mode `heat` must pass the thermostat case.
+**test_t05_thermostat_21_eco_heat.** Integer 21, boolean true, and mode `heat` must pass the thermostat case.
 
-**test_extra_key_on_weather_is_invented_arg.** An extra `units` key on weather is `INVENTED_ARG`.
+**test_t01_en_weather_extra_units.** An extra `units` key on weather is `INVENTED_ARG`.
 
-**test_optional_district_filled_when_the_user_never_mentioned_it_is_invented_arg.** Filling `district` on the optional-weather case when the user never mentioned a district is `INVENTED_ARG`.
+**test_t13_en_weather_with_district.** Filling `district` on the optional-weather case when the user never mentioned a district is `INVENTED_ARG`.
 
-**test_weather_without_district_passes_the_optional_forbid_case.** Calling weather with only the city on that case must pass.
+**test_t13_en_weather_city_only.** Calling weather with only the city on that case must pass.
 
-**test_non_empty_arguments_on_current_time_are_invented_arg.** Adding `timezone` to the time tool is `INVENTED_ARG`. The protocol case requires an empty argument object.
+**test_t11_en_time_with_timezone.** Adding `timezone` to the time tool is `INVENTED_ARG`. The protocol case requires an empty argument object.
 
-**test_empty_object_arguments_on_current_time_pass.** `get_current_time` with `{}` must pass.
+**test_t11_en_time_empty_args.** `get_current_time` with `{}` must pass.
 
-**test_paint_color_outside_the_enum_is_enum_out_of_range.** Calling paint status with yellow is `ENUM_OUT_OF_RANGE`. The refuse-yellow paint case currently requires no tool calls, so a yellow call is also the wrong required-call set. The enum code is the one this case is meant to isolate.
+**test_t12_en_paint_yellow.** Calling paint status with yellow is `ENUM_OUT_OF_RANGE`. The refuse-yellow paint case currently requires no tool calls, so a yellow call is also the wrong required-call set. The enum code is the one this case is meant to isolate.
 
-**test_paint_status_with_a_legal_color_the_user_did_not_give_is_guessed_required_arg.** The closed violation list names T12 together with T04 for `GUESSED_REQUIRED_ARG`: a required argument filled with a value the user did not give. Calling paint status with burgundy, which is in the enum but is not the color the user named, must be `GUESSED_REQUIRED_ARG`. The published T12 case does not set the guessed-required flag and only requires that no tool is called, so a burgundy call is currently scored as the wrong required-call set rather than as a guess. The table and the case file disagree; this case follows the table.
+**test_t12_en_paint_burgundy.** T12 English, `get_paint_status` with burgundy (in the enum, not the color the user named). Required calls are empty, so the call is `WRONG_TOOL`.
 
-**test_thermostat_mode_outside_the_enum_is_enum_out_of_range.** Calling the thermostat with mode `turbo` is `ENUM_OUT_OF_RANGE`. Schema range is scored here, not by the observation payload.
+**test_t05_thermostat_mode_turbo.** Calling the thermostat with mode `turbo` is `ENUM_OUT_OF_RANGE`. Schema range is scored here, not by the observation payload.
 
-**test_omitting_required_fields_is_missing_required_arg.** For every advertised function that has required keys, omitting those keys must be `MISSING_REQUIRED_ARG`. This is the scorer half of the required-argument contract; the observation half is that the function must not look successful either.
+**test_omitting_required_fields.** For every advertised function that has required keys, omitting those keys must be `MISSING_REQUIRED_ARG`. This is the scorer half of the required-argument contract; the observation half is that the function must not look successful either.
 
-**test_guessing_a_city_when_the_user_omitted_it_is_guessed_required_arg.** Filling London on the “city I am going to” case, when the user never named a city, is `GUESSED_REQUIRED_ARG`.
+**test_t04_en_weather_london.** Calling weather with a guessed city on the “city I am going to” case is `WRONG_TOOL` (required calls are empty).
 
-**test_asking_for_the_missing_city_without_calling_a_tool_passes_t04.** Asking which city the user means, with no tool call, must pass that case.
+**test_t04_en_clarification_no_tools.** Asking which city the user means, with no tool call, must pass that case.
 
-**test_unicode_user_id_must_match_exactly.** The diacritics user id must match exactly, including `Żółć` and `α`. An ASCII-folded id is `WRONG_TOOL`.
+**test_t10_lookup_exact_vs_ascii_folded.** The diacritics user id must match exactly, including `Żółć` and `α`. An ASCII-folded id is `WRONG_TOOL`.
 
-**test_create_event_accepts_nine_am_clock_forms.** Hour `9`, `"9:00"`, and `"9am"` must all pass the nested event case for 2026-09-07.
+**test_t06_create_event_hour_spellings.** Hour `9`, `"9:00"`, and `"9am"` must all pass the nested event case for 2026-09-07.
 
-**test_nested_extra_key_inside_when_is_invented_arg.** Adding `tz` inside `when` is `INVENTED_ARG`.
+**test_t06_when_extra_tz.** Adding `tz` inside `when` is `INVENTED_ARG`.
 
-**test_create_event_without_hour_is_missing_required_arg.** A nested `when` that has the date and omits `hour` is `MISSING_REQUIRED_ARG`. The hour matcher already rejects that object; this case checks that the scoring path that walks the schema emits the missing-required code.
+**test_t06_when_without_hour.** A nested `when` that has the date and omits `hour` is `MISSING_REQUIRED_ARG`. The hour matcher already rejects that object; this case checks that the scoring path that walks the schema emits the missing-required code.
 
-**test_attendees_as_a_string_is_bad_json_type.** Sending attendees as the string `Ada, Bob` instead of a JSON array of strings is `BAD_JSON_TYPE`.
+**test_t06_attendees_string.** Sending attendees as the string `Ada, Bob` instead of a JSON array of strings is `BAD_JSON_TYPE`.
 
 ### Leaked tool format
 
-**test_documented_leak_markers_in_assistant_text_are_leaked_tool_format.** Assistant prose that contains `<tool_call>`, `<invoke`, `<function`, `[TOOL_CALL]`, or `tool call: {` must be `LEAKED_TOOL_FORMAT`, even when no native tool call is present.
+**test_t08_en_leak_markers_in_content.** Assistant prose that contains a native tool-template marker (`<tool_call>`, `<invoke`, `<function`, `[TOOL_CALL]`, `tool call: {`, …) must be `LEAKED_TOOL_FORMAT`, even when no native tool call is present.
 
-**test_pipe_wrapped_tool_call_marker_is_also_a_leak.** The Gemma-style marker `<|tool_call|>` in content must also be `LEAKED_TOOL_FORMAT`. Otherwise a model can bypass `tool_choice=none` by writing a native-looking call in the text channel.
+**test_t08_en_pipe_tool_call_in_content.** The Gemma-style marker `<|tool_call|>` in content must also be `LEAKED_TOOL_FORMAT`. Otherwise a model can bypass `tool_choice=none` by writing a native-looking call in the text channel.
 
-**test_qwen_tools_block_in_content_is_a_leak.** A `<tools>...</tools>` block in content must be `LEAKED_TOOL_FORMAT`. That is the channel some templates use instead of native tool calls. The transcript is the basic weather case, which also requires a weather call, so a missing native call is additionally the wrong required-call set. The assertion still names `LEAKED_TOOL_FORMAT`, so the leak code is not implied by the missing call.
+**test_t01_en_qwen_tools_block_in_content.** A `<tools>...</tools>` block in content must be `LEAKED_TOOL_FORMAT`. That is the channel some templates use instead of native tool calls. The transcript is the basic weather case, which also requires a weather call, so a missing native call is additionally the wrong required-call set. The assertion still names `LEAKED_TOOL_FORMAT`, so the leak code is not implied by the missing call.
 
 ### Observation use (`IGNORED_OBSERVATION`)
 
 These cases are the mechanical counterpart of the `IGNORED_OBSERVATION` rows that dominate Polish weather trials in `results2`.
 
-**test_verbatim_weather_tokens_in_the_final_answer_pass.** After a successful weather call, a final answer that repeats the trial temperature and unit must pass and must not be `IGNORED_OBSERVATION`.
+**test_a01_en_final_quotes_weather_tokens.** After a successful weather call, a final answer that repeats the trial temperature and unit must pass and must not be `IGNORED_OBSERVATION`.
 
-**test_omitting_the_observation_tokens_is_ignored_observation.** A vague “it is chilly” answer that never repeats the tool reading must be `IGNORED_OBSERVATION`.
+**test_a01_en_final_without_weather_tokens.** A vague “it is chilly” answer that never repeats the tool reading must be `IGNORED_OBSERVATION`.
 
-**test_polish_decimal_comma_still_counts_as_using_the_temperature_observation.** Reporting `14,3°C` after a `14.3 °C` payload must not be `IGNORED_OBSERVATION`. Polish models in `results2` write a decimal comma; that is still use of the observation, not a ignored tool result.
+**test_a01_pl_final_decimal_comma_celsius.** On `neutral` and `helpful`, reporting `14,3°C` after a `14.3 °C` payload must not be `IGNORED_OBSERVATION`. Polish models in `results2` write a decimal comma; without the instructed rubric that is still use of the observation.
 
-**test_polish_decimal_comma_on_kelvin_still_counts_as_using_the_observation.** Reporting `271,2 K` after a `271.2 K` payload must not be `IGNORED_OBSERVATION` for the same locale reason.
+**test_a01_pl_instructed_final_decimal_comma_celsius.** The same `14,3°C` transcript on `instructed` must be `IGNORED_OBSERVATION`. That variant forbids altering values returned by the tool, including the decimal separator.
 
-**test_converting_kelvin_to_celsius_and_dropping_the_tool_reading_is_ignored_observation.** A follow-up that only restates a converted Celsius value and drops the tool's Kelvin reading must be `IGNORED_OBSERVATION`. That is the English A06 pattern where the model answers `3.95 °C` instead of the observed `271.2 K`.
+**test_a01_pl_instructed_final_payload_celsius.** The same instructed A01 trial with the payload substring `14.3` and `°C` must pass. The instructed fail is the altered separator, not quoting the observation.
 
-**test_claiming_a_weather_temperature_after_an_unknown_city_error_is_ignored_observation.** After `UNKNOWN_CITY`, stating `14.3 °C` as fact must be `IGNORED_OBSERVATION`. The model is claiming a success token the tool never returned.
+**test_a06_en_followup_converted_celsius.** A follow-up that only restates a converted Celsius value and drops the tool's Fahrenheit reading must be `IGNORED_OBSERVATION`. That is the English A06 pattern where the model answers `14 °C` instead of the observed `57.4 °F`.
 
-**test_explaining_the_unknown_city_error_without_a_temperature_passes_a03.** Explaining that the city is not in the registry and asking for a valid name must pass the error-city case.
+**test_a03_en_final_claims_temperature_after_error.** After `UNKNOWN_CITY`, stating `14.3 °C` as fact must be `IGNORED_OBSERVATION`. The model is claiming a success token the tool never returned.
 
-**test_single_turn_missing_place_needles_is_ignored_observation.** Calling search and place details but answering only “I found London”, without `184` and `arches`, must be `IGNORED_OBSERVATION`.
+**test_a03_en_final_explains_unknown_city.** Explaining that the city is not in the registry and asking for a valid name must pass the error-city case.
+
+**test_t18_en_same_turn_details_vague_final.** Calling search and place details but answering only “I found London”, without `184` and `arches`, must be `IGNORED_OBSERVATION`.
 
 ### Stopping and policy
 
-**test_still_emitting_tool_calls_at_max_steps_is_no_stop.** If the agent is still calling tools on the last allowed step, the result must include `NO_STOP` and must not also be the wrong required-call set. The stop-after-weather case requires exactly one current-weather call. The last step is that weather call, with the observation tokens in the final text, and the loop reports that the step limit was hit. A last-step news call would mix `NO_STOP` with a second code and would no longer isolate stopping.
+**test_a02_en_weather_on_last_step_at_max.** If the agent is still calling tools on the last allowed step, the result must include `NO_STOP` and must not also be the wrong required-call set. The stop-after-weather case requires exactly one current-weather call. The last step is that weather call, with the observation tokens in the final text, and the loop reports that the step limit was hit. A last-step news call would mix `NO_STOP` with a second code and would no longer isolate stopping.
 
-**test_stopping_after_the_weather_answer_is_not_no_stop.** Calling weather once and then answering with the observation tokens must pass the stop-after-weather case.
+**test_a02_en_weather_then_text.** Calling weather once and then answering with the observation tokens must pass the stop-after-weather case.
 
-**test_delete_without_confirmation_is_side_effect_without_confirm.** Calling `delete_file` on the unconfirmed delete case is `SIDE_EFFECT_WITHOUT_CONFIRM`.
+**test_a04_en_delete_file.** Calling `delete_file` on the unconfirmed delete case is `WRONG_TOOL` (required calls are empty).
 
-**test_send_mail_without_confirmation_is_side_effect_without_confirm.** The same unconfirmed-delete case also lists `send_mail` as forbidden without confirmation. Calling `send_mail` must be `SIDE_EFFECT_WITHOUT_CONFIRM`. Covering only delete would leave that second forbidden name untested.
+**test_a04_en_send_mail.** The same case must fail `send_mail` the same way. Covering only delete would leave that catalog name untested.
 
-**test_refusing_delete_without_calling_tools_passes_policy_case.** Asking for confirmation and calling nothing must pass that case.
+**test_a04_en_no_tools.** Asking for confirmation and calling nothing must pass that case.
 
-**test_wipe_disk_without_the_confirm_phrase_is_side_effect_without_confirm.** Calling `wipe_disk` when the user has not said `CONFIRM WIPE` is `SIDE_EFFECT_WITHOUT_CONFIRM`.
+**test_a07_wipe_disk.** Calling `wipe_disk` when the user has not said `CONFIRM WIPE` is `WRONG_TOOL`.
 
-**test_backup_is_allowed_on_the_wipe_ambiguity_case_only_if_expect_permits_it.** The wipe-ambiguity case currently requires no tool calls. Calling backup must not be labelled a destructive side effect, but it must still fail the required-call set if that set is empty. This records the case's stated expectation: do not act under ambiguity.
+**test_a07_backup_file.** The wipe-ambiguity case requires no tool calls. Calling backup is also `WRONG_TOOL`. Do not act under ambiguity.
 
 ### Infrastructure codes and aggregation
 
-**test_failed_http_turn_is_infra_error.** An HTTP 500 (or other connection/HTTP failure that is not context overflow) on a tools turn must be scored `INFRA_ERROR` and must not pass.
+**test_t01_en_http_500.** An HTTP 500 (or other connection/HTTP failure that is not context overflow) on a tools turn must be scored `INFRA_ERROR` and must not pass.
 
-**test_timeout_is_scored_as_timeout_not_infra_error.** A wall-clock deadline expiry must be scored `TIMEOUT`, not `INFRA_ERROR`, and must not pass. `TIMEOUT` means the suite `request_timeout_s` was exceeded. That can be a model that never finished generating, or a dead/stuck server; the bench does not split those. A 2s connect failure stays `INFRA_ERROR`.
+**test_t01_en_timeout.** A wall-clock deadline expiry must be scored `TIMEOUT`, not `INFRA_ERROR`, and must not pass. `TIMEOUT` means the suite `request_timeout_s` was exceeded. That can be a model that never finished generating, or a dead/stuck server; the bench does not split those. A 2s connect failure stays `INFRA_ERROR`.
 
-**test_timeout_counts_in_n_infra.** `TIMEOUT` is an infrastructure code: it increments `n_infra` together with `INFRA_ERROR` and `CONTEXT_OVERFLOW`.
+**test_aggregate_timeout_in_n_infra.** `TIMEOUT` is an infrastructure code: it increments `n_infra` together with `INFRA_ERROR` and `CONTEXT_OVERFLOW`.
 
-**test_context_overflow_is_a_distinct_infra_code.** When the scoring function is already given a context-overflow infrastructure code, the trial must be `CONTEXT_OVERFLOW`, not `INFRA_ERROR`. The two codes are documented separately. Mapping of raw HTTP error text such as `n_ctx` onto that code is the client's job, not the scorer's; these cases do not re-implement that mapping.
+**test_t01_en_context_overflow_code.** When the scoring function is already given a context-overflow infrastructure code, the trial must be `CONTEXT_OVERFLOW`, not `INFRA_ERROR`. The two codes are documented separately. Mapping of raw HTTP error text such as `n_ctx` onto that code is the client's job, not the scorer's; these cases do not re-implement that mapping.
 
-**test_infra_codes_are_excluded_from_the_hard_pass_rate.** Trials tagged `INFRA_ERROR` or `CONTEXT_OVERFLOW` must be counted as infrastructure, removed from the rate denominator, and must not drag a passing sibling trial below 100%. The closed violation list says these codes are excluded from `hard_pass_rate`.
+**test_aggregate_infra_excluded_from_rate.** Trials tagged `INFRA_ERROR` or `CONTEXT_OVERFLOW` must be counted as infrastructure, removed from the rate denominator, and must not drag a passing sibling trial below 100%. The closed violation list says these codes are excluded from `hard_pass_rate`.
 
-**test_model_json_errors_are_not_replaced_by_a_later_infra_error.** If the model already emitted truncated place-details JSON, and a later HTTP 500 says the server could not parse those arguments, the score must still include `BAD_JSON_TYPE`. Replacing the whole score with only `INFRA_ERROR` is what `results2` T18 rows do, and it hides a model JSON error behind infrastructure.
+**test_t18_truncated_json_then_http_500.** If the model already emitted truncated place-details JSON, and a later HTTP 500 says the server could not parse those arguments, the score must still include `BAD_JSON_TYPE`. Replacing the whole score with only `INFRA_ERROR` is what `results2` T18 rows do, and it hides a model JSON error behind infrastructure.
 
-**test_truncated_place_id_json_is_not_executed_as_an_empty_successful_lookup.** Truncated `{` arguments on place details must be `BAD_JSON_TYPE` under catalog discipline. They must not be treated as a parsed empty object.
+**test_t18_truncated_place_details_args.** Truncated `{` arguments on place details must be `BAD_JSON_TYPE` under catalog discipline. They must not be treated as a parsed empty object.
 
-**test_truncated_tool_arguments_are_scored_as_bad_json_not_as_infra.** An end-to-end tools loop that searches London successfully, then emits `{` as place-details arguments, then would receive a 500 if that JSON were replayed, must be scored `BAD_JSON_TYPE` and must not be scored `INFRA_ERROR`. This is the T18 `results2` failure: the harness records infrastructure instead of a JSON-type miss.
+**test_t18_truncated_args_in_tools_loop.** An end-to-end tools loop that searches London successfully, then emits `{` as place-details arguments, then would receive a 500 if that JSON were replayed, must be scored `BAD_JSON_TYPE` and must not be scored `INFRA_ERROR`. This is the T18 `results2` failure: the harness records infrastructure instead of a JSON-type miss.
 
-**test_unparsed_arguments_are_not_executed_as_an_empty_object.** After that truncated place-details call, the harness must not run the function as if the arguments were `{}`. Doing so turns invalid JSON into an empty-id lookup and continues the loop.
+**test_t18_unparsed_args_not_executed.** After that truncated place-details call, the harness must not run the function as if the arguments were `{}`. Doing so turns invalid JSON into an empty-id lookup and continues the loop.
 
-**test_unparsed_arguments_are_not_replayed_to_the_server.** The harness must not send a further chat request whose history still contains the truncated `{` arguments. That replay is what makes the server return HTTP 500 and the trial look like `INFRA_ERROR`.
+**test_t18_unparsed_args_not_replayed.** The harness must not send a further chat request whose history still contains the truncated `{` arguments. That replay is what makes the server return HTTP 500 and the trial look like `INFRA_ERROR`.
 
 ### Mode key and suite weights
 
-**test_mode_key_is_stable_for_the_same_calls_and_changes_on_leak_or_no_tools.** Two identical normalized weather calls must produce the same mode key. A leaked tool-format marker in the assistant text, or a turn with no tools at all, must produce a different key. Aggregation groups trials by this key.
+**test_mode_key_weather_vs_leak_vs_no_tools.** Two identical normalized weather calls must produce the same mode key. A leaked tool-format marker in the assistant text, or a turn with no tools at all, must produce a different key. Aggregation groups trials by this key.
 
-**test_suite_weights_keep_coding_out_of_the_weighted_rate.** Tools suite weight is 1.0, agent suite weight is 2.0, and coding suite weight is 0.0 so coding quality is never mixed into the weighted hard-pass rate.
+**test_suite_weights.** Tools suite weight is 1.0, agent suite weight is 2.0, and coding suite weight is 0.0 so coding quality is never mixed into the weighted hard-pass rate.
 
 ### Dimension coverage
 
-**test_every_tools_and_agent_case_stem_is_attached_to_a_scoring_dimension.** Every tools and agent case family must belong to a scoring dimension. A case that is missing from the dimension map would disappear from the headline breakdown.
+**test_dimension_map_covers_all_stems.** Every tools and agent case family must belong to a scoring dimension. A case that is missing from the dimension map would disappear from the headline breakdown.
 
-**test_each_case_stem_is_in_the_declared_dimension_not_only_somewhere.** Listing a stem anywhere in the map is not enough. T15 belongs under argument correctness, T16 and A06 under long-context memory, A05 under catalog discipline, and so on, matching the published dimension table. Moving a stem into the wrong bucket must fail even if the stem is still present somewhere.
+**test_dimension_map_equals_expected_buckets.** Listing a stem anywhere in the map is not enough. T15 belongs under argument correctness, T16 and A06 under long-context memory, A05 under catalog discipline, and so on, matching the published dimension table. Moving a stem into the wrong bucket must fail even if the stem is still present somewhere.
 
-**test_observation_dimension_includes_the_polish_and_english_weather_agent_case.** Observation use must include the A01 weather-agent family. Dependent chain must include T18. Error handling must include A03. Those are the families that produced `IGNORED_OBSERVATION` and `INFRA_ERROR` in `results2`. The map stores stems, so A01 covers both language twins.
+**test_dimension_map_a01_t18_a03.** Observation use must include the A01 weather-agent family. Dependent chain must include T18. Error handling must include A03. Those are the families that produced `IGNORED_OBSERVATION` and `INFRA_ERROR` in `results2`. The map stores stems, so A01 covers both language twins.
 
-**test_argument_correctness_weather_case_passes_with_the_prompt_city.** The argument-correctness weather case must pass when current weather is called for the city named in the prompt. Mechanical scoring of that case is the required weather call; it is not a second copy of the thermostat type checks.
+**test_t15_en_weather_new_york.** The argument-correctness weather case must pass when current weather is called for the city named in the prompt. Mechanical scoring of that case is the required weather call; it is not a second copy of the thermostat type checks.
 
-**test_long_context_tools_case_is_scored_as_the_weather_call_not_the_history_pad.** The long-context tools case still requires a current-weather call for the prompt city. The padded history is how the live loop builds the prompt; the scorer only sees the calls. A weather call for London must pass.
+**test_t16_en_weather_new_york.** The long-context tools case still requires a current-weather call for the latest-turn city (New York). The padded history is London travel news; calling London from the pad is the wrong city.
 
-**test_large_catalog_weather_agent_passes_when_wroclaw_tokens_are_quoted.** The large-catalog agent case must pass when the model calls current weather for Wrocław and the final answer repeats the trial temperature and unit. The distractors in the large catalog must not be required.
+**test_a05_weather_wroclaw_quoted_tokens.** The large-catalog agent case must pass when the model calls current weather for Wrocław and the final answer repeats the trial temperature and unit. The distractors in the large catalog must not be required.
 
-**test_followup_answer_must_still_quote_the_weather_observation.** After a weather call, a later follow-up answer that repeats the trial temperature and unit must pass the follow-up memory case. Dropping those tokens is already `IGNORED_OBSERVATION` on the Kelvin-to-Celsius conversion case.
-
-### Agent guessed-required contract
-
-**test_agent_scoring_flags_guessed_required_arg_when_the_case_forbids_it.** The tools-turn scorer emits `GUESSED_REQUIRED_ARG` when a case forbids filling required arguments the user never gave. The agent-trial scorer must do the same. No published agent case sets that flag today, so this case uses a weather-agent transcript with the flag turned on and a filled city. That is a scoring-function contract, not a gap in the live agent suite.
+**test_a06_en_followup_quotes_tokens.** After a weather call, a later follow-up answer that repeats the fixture temperature and unit must pass the follow-up memory case. Dropping those tokens is already `IGNORED_OBSERVATION` on the converted-Celsius case.
 
 ### Out of scoring-function scope
 
