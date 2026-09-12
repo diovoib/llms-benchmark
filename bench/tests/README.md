@@ -288,7 +288,11 @@ These cases are the mechanical counterpart of the `IGNORED_OBSERVATION` rows tha
 
 ### Infrastructure codes and aggregation
 
-**test_failed_http_turn_is_infra_error.** A timeout or HTTP failure on a tools turn must be scored `INFRA_ERROR` and must not pass.
+**test_failed_http_turn_is_infra_error.** An HTTP 500 (or other connection/HTTP failure that is not context overflow) on a tools turn must be scored `INFRA_ERROR` and must not pass.
+
+**test_timeout_is_scored_as_timeout_not_infra_error.** A wall-clock deadline expiry must be scored `TIMEOUT`, not `INFRA_ERROR`, and must not pass. `TIMEOUT` means the suite `request_timeout_s` was exceeded. That can be a model that never finished generating, or a dead/stuck server; the bench does not split those. A 2s connect failure stays `INFRA_ERROR`.
+
+**test_timeout_counts_in_n_infra.** `TIMEOUT` is an infrastructure code: it increments `n_infra` together with `INFRA_ERROR` and `CONTEXT_OVERFLOW`.
 
 **test_context_overflow_is_a_distinct_infra_code.** When the scoring function is already given a context-overflow infrastructure code, the trial must be `CONTEXT_OVERFLOW`, not `INFRA_ERROR`. The two codes are documented separately. Mapping of raw HTTP error text such as `n_ctx` onto that code is the client's job, not the scorer's; these cases do not re-implement that mapping.
 

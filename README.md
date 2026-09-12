@@ -16,7 +16,7 @@ The final outcome should be assessed by a judge — a human or a larger LLM — 
 - Python 3.10+
 - A running OpenAI-compatible server (default `http://127.0.0.1:8080/v1`)
 - The model chat template **must support tools**.
-- `llama_bat` in config points at your launcher (default `llama.bat` next to this README); the bench reads **`--api-key` only** (do not copy the key into yaml). Override: env `BENCH_API_KEY` or `api_key` in yaml. `llama.bat` is gitignored — copy it from [`llama.bat.example`](llama.bat.example) and edit locally.
+- `launcher` in config points at your server launcher (default `../llama.bat` from `bench/`); the bench reads **`--api-key`** and **`--ctx-size` / `--ctx_size` / `-c`**. Missing ctx defaults to 16384 (used as C01 `max_tokens`; it does not change the running server). Do not copy the key into yaml. Override: env `BENCH_API_KEY` or `api_key` in yaml. `llama.bat` / `llama.sh` are gitignored — copy from [`llama.bat.example`](llama.bat.example) or [`llama.sh.example`](llama.sh.example) and edit locally.
 
 ```text
 cd bench
@@ -28,7 +28,9 @@ python -m pip install -r requirements.txt
 
 1. Download a server that hosts GGUF (or other) weights and exposes OpenAI-compatible `POST /v1/chat/completions`. This repo currently uses llama.cpp `llama-server` via a local `llama.bat`. Ollama, LM Studio, and vLLM will also work when `base_url` and the API key match between the running model server and the config file.
 
-2. For llama.cpp (for other servers, make a similar launcher) copy [`llama.bat.example`](llama.bat.example) to `llama.bat` and edit that copy: fill in the path to where you installed `llama-server.exe`, your models directory `--models-dir`, and `--api-key`. Git ignores `llama.bat`, so local paths and keys stay off the remote.
+2. For llama.cpp copy [`llama.bat.example`](llama.bat.example) to `llama.bat` (or [`llama.sh.example`](llama.sh.example) to `llama.sh`) and edit that copy: fill in the path to where you installed `llama-server`, your models directory `--models-dir`, `--ctx-size`, and `--api-key`. Git ignores `llama.bat` and `llama.sh`, so local paths and keys stay off the remote.
+
+`launcher` in yaml is the only launcher field. Kind is the filename stem in lowercase (`llama.bat` / `llama.sh` → `llama`). Registered kinds: `llama` (parsed), `ollama`, `vllm`, `lmstudio` (not implemented yet — the bench will refuse that kind). Other servers can still be used if you point `launcher` at a `llama.bat`/`llama.sh`-style file (or keep using a llama.cpp launcher) and set `base_url` to match the already running server.
 
 ```text
 copy llama.bat.example llama.bat
@@ -67,7 +69,10 @@ curl -H "Authorization: Bearer <api_key>" http://127.0.0.1:8080/v1/models
 
 ```text
 python run.py run
+python run.py run --verbose
 ```
+
+`--verbose` prints each scored HTTP call as `\n\nRequest:\n` plus the raw POST body after send, then `\n\nResponse:\n` plus the full response body after receive. Not used on preflight or `summarize`.
 
 7. After it starts, the bench creates `bench/results/20260906T100000Z` with logs and results from the run.
 While it runs it also prints basic progress, so you can see whether it is working at all, or whether it is already worth stopping and fixing something.
@@ -225,7 +230,16 @@ Config also has `optional_temp_sweep.enabled: true`. It is meant only for the su
 
 ### Results
 
-After a run the bench creates a dated folder, for example `bench/results/20260906T100000Z`. That is where everything needed for scoring lands: conversation transcripts, a short list of which tests passed, and a copy of the config the run was started with.
+After a run the bench creates a dated folder, for example `bench/results/20260906T100000Z`. That is where everything needed for scoring lands: conversation transcripts, unsparsed HTTP in `*.raw.txt`, layered `summary.json` files, and a copy of the config the run was started with. Required suite timeouts are `tools: 60s`, `agent: 90s`, `coding: 2400s` wall-clock per HTTP call. If that deadline expires the trial is `TIMEOUT`: a model that never finished generating, or a server that stopped responding — the bench does not distinguish those. A failed TCP connect within `connect_timeout_s` (2s) is `INFRA_ERROR`, not `TIMEOUT`. Tools/agent `max_tokens` is 1024; C01 uses launcher `ctx_size` (default 16384).
+
+To rebuild summaries for a packed set of model trees (without re-running models):
+
+```text
+mkdir results\zestaw-do-sedziego
+xcopy /E /I results\20260908T045257Z\gemma-4-12b-it-Q4_K_M results\zestaw-do-sedziego\gemma-4-12b-it-Q4_K_M
+xcopy /E /I results\20260909T065153Z\mistralai_Mistral-Small-3.2-24B-Instruct-2506-Q4_K_M results\zestaw-do-sedziego\mistralai_Mistral-Small-3.2-24B-Instruct-2506-Q4_K_M
+python run.py summarize results\zestaw-do-sedziego
+```
 
 As a starting point there are two places: `summary.txt` says what passed and what did not. The `cases/` directories hold the actual conversations — the `.txt` file reads like a chat. When something fails, the transcript shows whether the model called a tool, guessed a city, or pasted template junk into the answer.
 
@@ -247,6 +261,7 @@ results/<timestamp>/
     coding/trial_001/        # only if coding ran
       conversation.json
       conversation.txt
+      conversation.raw.txt
       attempts/
       tool_client.py
       python_checks.json
@@ -255,15 +270,16 @@ results/<timestamp>/
     <prompt_variant>/
       SYSTEM.txt
       temp_sweep.json        # only when the sweep is enabled
-      cases/<id>/trial_001.{txt,json}
+      cases/<id>/CASE.md
+      cases/<id>/trial_001.{txt,json,raw.txt}
 ```
 
 
 ## Judge
 
-Automatic 0/1 does not finish the evaluation. The bench catches the obvious things — wrong tool, bad JSON, a template leaking into the chat — but it does not decide whether asking for a missing city was reasonable, or whether the code review was self-adoration, a hymn in its own honour. An automatic check cannot do that, which is why the start of this document talks about a judge.
+Automatic 0/1 does not finish the evaluation. Give the judge the results folder (it has its own `README.md`, `judge/`, `CASE.md`, transcripts). Do not expect the judge to open this git repo. Mechanical ground truth is the trial files plus the **prompt-variant** `summary.json`; greedy/real, model, and root summaries are means of those child headlines.
 
-The directory can be scored by a human or a larger model. Or several directories if more models took part in the tests. [`bench/judge/`](bench/judge/) has criteria and a ready-made prompt if you want an LLM to do this in a reasonably repeatable way. To start, reading `summary.txt` and the transcripts is enough; the judge JSON schema is optional.
+The bench catches the obvious things — wrong tool, bad JSON, a template leaking into the chat — but it does not decide whether asking for a missing city was reasonable, or whether the code review was self-adoration. An automatic check cannot do that, which is why the start of this document talks about a judge.
 
 
 ### Interpretation
@@ -279,7 +295,7 @@ The `greedy` profile (temperature 0) is there to see whether things work at all,
 
 | Path | Role |
 | --- | --- |
-| [`llama.bat.example`](llama.bat.example) | Template for the local llama-server launcher (`--models-dir`, `--ctx-size`, `--jinja` — required for `tools`). Copy to `llama.bat` and edit; that file is gitignored. |
+| [`llama.bat.example`](llama.bat.example) / [`llama.sh.example`](llama.sh.example) | Template for the local llama-server launcher (`--models-dir`, `--ctx-size`, `--jinja` — required for `tools`). Copy to `llama.bat` or `llama.sh` and edit; those files are gitignored. |
 | [`bench/`](bench/) | The whole benchmark: CLI, cases, mocks, judge (files, no API call). |
 | [`bench/config.yaml.example`](bench/config.yaml.example) | Endpoint, models, sampler profiles, suites and repeat counts. To be copied to `config.yaml` |
 | [`bench/src/bench/`](bench/src/bench/) | Code: client, preflight, runner, hard 0/1, coding loop. |
@@ -291,4 +307,4 @@ The `greedy` profile (temperature 0) is there to see whether things work at all,
 
 ### Out of the project
 
-RAG, GUI, voice, web research, safety red-team, **streaming** tool calls (a different llama.cpp path).
+RAG, GUI, voice, web research, safety red-team.

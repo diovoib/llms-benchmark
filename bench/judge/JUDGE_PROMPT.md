@@ -1,15 +1,16 @@
 # Judge prompt
 
-You receive one or more run directories under `results/` (a timestamp folder, several of them, or the whole `results/` tree). Open every `<model>/<profile>/` tree. Compare models when more than one is present.
+You receive one results directory (a timestamp folder, a packed set of model trees, or several of those). Read **only this directory**. Do not open the git repository, `llama.bat` / `llama.sh`, or `bench/src`.
 
-Mechanical ground truth is each run’s `summary.json` (and the `hard_pass` / `violations` lines on each trial). Do not recompute JSON/tool-parse checks.
+Compare models when more than one is present.
 
-Transcripts:
+Mechanical ground truth is each trial’s `trial_*.json` (`hard_pass` / `violations`) plus the **prompt-variant** `summary.json` at `<model>/<profile>/<prompt_variant>/`. Do not recompute JSON/tool-parse checks. Do not flip `hard_pass` because a transcript looks right or wrong. `summary.json` on `greedy`/`real`, on the model folder, and at this root are unweighted means of the child headlines, not a second scoring pass.
 
-- tools/agent: `<model>/<profile>/<prompt_variant>/cases/<id>/trial_*.txt`
-- C01: `<model>/<profile>/coding/trial_*/conversation.txt`
+Tools/agent card: `CASE.md` next to the trials (Purpose / Expected answer). Also read `trial_*.txt`. If that file is short but wall time or `completion_tokens` is large, read `trial_*.raw.txt` — generation is on the wire.
 
-Ids: `trial_id_map.json` at the run root. Path names are the model/profile/variant labels.
+C01: `conversation.txt`, `python_checks.json`, `attempts/`. There is no `CASE.md`. Do not run the extracted code.
+
+Ids: `trial_id_map.json` at this directory’s root. Path names are the model/profile/variant labels.
 
 Rules:
 
@@ -19,6 +20,7 @@ Rules:
 4. Every row has `evidence.quote` copied verbatim from that trial’s transcript and `evidence.trial_id` equal to the row id. If you cannot copy a real substring, set all scores to 0.
 5. If uncertain, score 0 and add a closed-list violation code.
 6. You may name models, profiles, and prompt variants when comparing.
+7. To correct a judge row later: keep `evidence.quote` verbatim; change only the judge 0/1. Do not edit trial `hard_pass`. Harness bugs are notes, not judge-JSON edits.
 
 Score keys to fill per case:
 

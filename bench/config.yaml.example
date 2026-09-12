@@ -1,6 +1,8 @@
 base_url: http://127.0.0.1:8080/v1
-# --api-key is read from this launcher. Do not put the key in this file.
-llama_bat: ../llama.bat
+# --api-key and --ctx-size are read from this launcher. Do not put the key in this file.
+launcher: ../llama.bat
+connect_timeout_s: 2
+log_flush_bytes: 256
 max_coding_rounds: 7
 # Headline numbers are `neutral` (no system message).
 # instructed = SYS_INSTRUCTED. Optional: helpful = SYS_NEUTRAL, harness = harness_system.
@@ -9,14 +11,11 @@ harness_system: ""
 optional_temp_sweep:
   enabled: false
   suite: tools
-  # additionally to the greedy and real values
-  temperatures: [0.3, 1.0]
+  temperatures: [0.0, 0.3, 0.7, 1.0]
 
 models:
-  - name: ModelA
-    recommended_temperature: 0.8
-  - name: ModelNameB
-    recommended_temperature: 0.5
+  - name: gemma-4-12b-it-Q5_K_M
+    recommended_temperature: 0.7
 
 profiles:
   greedy:
@@ -43,16 +42,21 @@ profiles:
 
 suites:
   tools:
+    request_timeout_s: 60
+    max_tokens: 1024
     cases: [T01_pl, T01_en, T02, T03_pl, T03_en, T04_pl, T04_en, T05, T06, T07, T08_pl, T08_en, T09_pl, T09_en, T10, T11_pl, T11_en, T12_pl, T12_en, T13_pl, T13_en, T14_pl, T14_en, T15_pl, T15_en, T16_pl, T16_en, T17_pl, T17_en, T18_pl, T18_en]
     repeats:
       greedy: 2
       real: 5
   agent:
+    request_timeout_s: 90
+    max_tokens: 1024
     cases: [A01_pl, A01_en, A02_pl, A02_en, A03_pl, A03_en, A04_pl, A04_en, A05, A06_pl, A06_en, A07]
     repeats:
       greedy: 2
       real: 3
   coding:
+    request_timeout_s: 2400
     cases: [C01]
     repeats:
       greedy: 1

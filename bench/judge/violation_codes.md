@@ -20,7 +20,8 @@ Use only these strings. Do not invent codes.
 | SPEC_ITEM_MISSING | hidden tests | Spec id failed, or `tool_client.py` missing/unparseable. |
 | REGRESSION | unused | Leftover from the old multi-round coding harness. |
 | CONTEXT_OVERFLOW | infra | Server error text reports context / n_ctx overflow. Exclude from hard_pass_rate. |
-| INFRA_ERROR | infra | Timeout, connection, or 5xx/HTTP failure that is not context overflow. Exclude from hard_pass_rate. |
+| INFRA_ERROR | infra | Connection failure or 5xx/HTTP failure that is not context overflow. Exclude from hard_pass_rate. |
+| TIMEOUT | infra | Wall-clock deadline for that HTTP call expired. May be a model that never finished generating, or a server that stopped responding; the bench does not distinguish. Counted in n_infra. |
 | JUDGE_UNSTABLE | validation | Two judge runs disagree on scores for a trial_id. |
 | RUBBER_STAMP_REVIEW | judge only | C01: OK (or empty critique) with no real check of the code in the conversation. |
 | ITERATION_PROTOCOL_BREAK | n/a for C01 | Unused for current C01 (no file tools). |

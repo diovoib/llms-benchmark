@@ -6,18 +6,14 @@ import json
 import signal
 import sys
 import threading
-from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
-from bench.client import BenchClient
+from bench.client import BenchClient, ChatResult
 from bench.coding_loop import run_coding_trial
 from bench.config import model_dir_name, resolve_temperature, snapshot_config
 from bench.hard_score import (
-    DIMENSIONS,
-    SUITE_WEIGHTS,
-    aggregate_trials,
     mode_key,
     normalize_tool_calls,
     score_agent_trial,
@@ -25,7 +21,16 @@ from bench.hard_score import (
 )
 from bench.mocks import execute_mock, weather_claim_tokens, weather_required_substrings
 from bench.preflight import run_preflight
-from bench.results_io import trial_txt, write_json, write_text, write_yaml
+from bench.results_io import (
+    RawWireLog,
+    copy_judge_bundle,
+    snapshot_trial_files,
+    write_case_md,
+    write_json,
+    write_results_readme,
+    write_text,
+    write_yaml,
+)
 from bench.progress import (
     line_fail,
     line_interrupted,
@@ -38,7 +43,8 @@ from bench.progress import (
     trial_label,
 )
 from bench.prompts import apply_prompt_variant, selected_prompt_variants
-from bench.suites.cases import all_cases, case_stem
+from bench.suites.cases import all_cases
+from bench.summary import snapshot_prompts, write_summary_tree
 from bench.template_dialect import (
     adapt_messages,
     coalesce_history,
@@ -150,6 +156,12 @@ def run_tool_or_agent_case(
     sampler: dict[str, Any],
     preflight: dict[str, Any],
     repeat: int = 0,
+    max_tokens: int | None = None,
+    request_timeout_s: float | None = None,
+    stream: bool = True,
+    wire: RawWireLog | None = None,
+    on_snapshot: Callable[[dict[str, Any]], None] | None = None,
+    progress_every_bytes: int = 256,
 ) -> dict[str, Any]:
     case = bind_weather_expect(case, repeat)
     dialect = (preflight or {}).get("template_dialect")
@@ -168,16 +180,49 @@ def run_tool_or_agent_case(
     followup = case.get("followup_user")
     followup_sent = False
 
+    def _chat(step_i: int):
+        kwargs: dict[str, Any] = dict(sampler)
+        kwargs["stream"] = stream
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        if request_timeout_s is not None:
+            kwargs["request_timeout_s"] = request_timeout_s
+        if wire is not None:
+            wire.begin_http_turn(step_i)
+            kwargs["on_wire"] = wire.on_wire
+        if on_snapshot is not None:
+            kwargs["progress_every_bytes"] = progress_every_bytes
+
+            def on_progress(partial: ChatResult) -> None:
+                live_messages = list(messages) + [partial.to_message()]
+                on_snapshot(
+                    {
+                        "in_progress": True,
+                        "messages": live_messages,
+                        "steps": steps,
+                        "partial_assistant": partial.to_message(),
+                        "latency_s": total_latency + partial.latency_s,
+                        "transcript_text": format_messages(live_messages),
+                    }
+                )
+
+            kwargs["on_progress"] = on_progress
+        try:
+            return client.chat(
+                messages,
+                tools=case.get("tools"),
+                tool_choice=case.get("tool_choice", "auto"),
+                parallel_tool_calls=case.get("parallel_tool_calls"),
+                **kwargs,
+            )
+        finally:
+            if wire is not None:
+                wire.finish_http_turn(force=True)
+
     hit_max = False
     for step_i in range(max_steps):
         client.raise_if_interrupted()
-        result = client.chat(
-            messages,
-            tools=case.get("tools"),
-            tool_choice=case.get("tool_choice", "auto"),
-            parallel_tool_calls=case.get("parallel_tool_calls"),
-            **sampler,
-        )
+        result = _chat(step_i)
         total_latency += result.latency_s
         prompt_tokens += result.prompt_tokens or 0
         completion_tokens += result.completion_tokens or 0
@@ -202,7 +247,19 @@ def run_tool_or_agent_case(
             "tool_payloads": [],
         }
         steps.append(step_rec)
+        if on_snapshot is not None:
+            on_snapshot(
+                {
+                    "in_progress": True,
+                    "messages": messages,
+                    "steps": steps,
+                    "latency_s": total_latency,
+                    "transcript_text": format_messages(messages),
+                }
+            )
         if not result.ok:
+            if wire is not None:
+                wire.flush(force=True)
             break
         if not normalized:
             messages.extend(adapt_messages([result.to_message()], dialect, id_map))
@@ -211,6 +268,16 @@ def run_tool_or_agent_case(
                 messages.append({"role": "user", "content": followup})
                 messages = coalesce_history(messages, dialect)
                 followup_sent = True
+                if on_snapshot is not None:
+                    on_snapshot(
+                        {
+                            "in_progress": True,
+                            "messages": messages,
+                            "steps": steps,
+                            "latency_s": total_latency,
+                            "transcript_text": format_messages(messages),
+                        }
+                    )
                 continue
             break
         chunk: list[dict[str, Any]] = [result.to_message()]
@@ -224,6 +291,16 @@ def run_tool_or_agent_case(
             })
         messages.extend(adapt_messages(chunk, dialect, id_map))
         messages = coalesce_history(messages, dialect)
+        if on_snapshot is not None:
+            on_snapshot(
+                {
+                    "in_progress": True,
+                    "messages": messages,
+                    "steps": steps,
+                    "latency_s": total_latency,
+                    "transcript_text": format_messages(messages),
+                }
+            )
 
     hit_max = bool(steps and steps[-1].get("normalized")) and len(steps) >= max_steps
 
@@ -250,6 +327,7 @@ def run_tool_or_agent_case(
 
     return {
         "ok_run": True,
+        "in_progress": False,
         "score": score,
         "messages": messages,
         "steps": steps,
@@ -265,151 +343,23 @@ def run_tool_or_agent_case(
     }
 
 
-def _rates_block(trials: list[dict[str, Any]]) -> dict[str, Any]:
-    by_case: dict[str, list] = defaultdict(list)
-    by_suite: dict[str, list] = defaultdict(list)
-    by_dim: dict[str, list] = defaultdict(list)
-    for t in trials:
-        by_case[t["case_id"]].append(t)
-        by_suite[t["suite"]].append(t)
-        for dim, ids in DIMENSIONS.items():
-            if case_stem(t["case_id"]) in ids:
-                by_dim[dim].append(t)
-    case_agg = {cid: aggregate_trials(rows) for cid, rows in by_case.items()}
-    suite_agg = {s: aggregate_trials(rows) for s, rows in by_suite.items()}
-    dim_agg = {d: aggregate_trials(rows) for d, rows in by_dim.items()}
-    weighted = []
-    for suite, agg in suite_agg.items():
-        w = SUITE_WEIGHTS.get(suite, 1.0)
-        if agg.get("hard_pass_rate") is None or w == 0:
-            continue
-        weighted.append((w, agg["hard_pass_rate"]))
-    overall = None
-    if weighted:
-        overall = sum(w * r for w, r in weighted) / sum(w for w, _ in weighted)
-    return {
-        "by_case": case_agg,
-        "by_suite": suite_agg,
-        "by_dimension": dim_agg,
-        "weighted_suite_hard_pass_rate": overall,
-        "n_trials": len(trials),
-    }
+def _suite_timeout(cfg: dict[str, Any], suite: str) -> float:
+    return float(((cfg.get("suites") or {}).get(suite) or {})["request_timeout_s"])
 
 
-def _rate_delta(instructed: Any, neutral: Any) -> Any:
-    if instructed is None or neutral is None:
-        return None
-    try:
-        return instructed - neutral
-    except TypeError:
-        return None
+def _suite_max_tokens(cfg: dict[str, Any], suite: str) -> int:
+    return int(((cfg.get("suites") or {}).get(suite) or {})["max_tokens"])
 
 
-def _agg_delta(instructed: dict[str, Any] | None, neutral: dict[str, Any] | None) -> dict[str, Any] | None:
-    if not instructed or not neutral:
-        return None
-    keys = set(instructed) | set(neutral)
-    out: dict[str, Any] = {}
-    for key in sorted(keys):
-        a = instructed.get(key) or {}
-        b = neutral.get(key) or {}
-        out[key] = {
-            "hard_pass_rate": _rate_delta(a.get("hard_pass_rate"), b.get("hard_pass_rate")),
-            "instructed": a.get("hard_pass_rate"),
-            "neutral": b.get("hard_pass_rate"),
-            "n_counted_instructed": a.get("n_counted"),
-            "n_counted_neutral": b.get("n_counted"),
-        }
-    return out
-
-
-def build_summary(all_trials: list[dict[str, Any]], coding_rows: list[dict[str, Any]]) -> dict[str, Any]:
-    all_trials = [t for t in all_trials if not t.get("interrupted") and not t.get("in_progress")]
-    coding_rows = [r for r in coding_rows if not r.get("interrupted") and not r.get("in_progress")]
-    by_variant: dict[str, list] = defaultdict(list)
-    for t in all_trials:
-        if t.get("suite") == "coding":
-            continue
-        by_variant[str(t.get("prompt_variant") or "unknown")].append(t)
-    variant_blocks = {name: _rates_block(rows) for name, rows in by_variant.items()}
-    primary_name = "neutral" if "neutral" in variant_blocks else (next(iter(variant_blocks), None))
-    primary = variant_blocks.get(primary_name) or _rates_block([])
-    inst = variant_blocks.get("instructed")
-    neu = variant_blocks.get("neutral")
-    delta = None
-    if inst and neu:
-        delta = {
-            "note": "instructed minus neutral. Positive = the scoring rubric prompt fixed a failure.",
-            "weighted_suite_hard_pass_rate": _rate_delta(
-                inst.get("weighted_suite_hard_pass_rate"),
-                neu.get("weighted_suite_hard_pass_rate"),
-            ),
-            "by_dimension": _agg_delta(inst.get("by_dimension"), neu.get("by_dimension")),
-            "by_case": _agg_delta(inst.get("by_case"), neu.get("by_case")),
-        }
-    return {
-        "ground_truth": True,
-        "do_not_rejudge": True,
-        "primary_prompt_variant": primary_name,
-        "by_prompt_variant": variant_blocks,
-        "delta_instructed_minus_neutral": delta,
-        "by_case": primary.get("by_case"),
-        "by_suite": primary.get("by_suite"),
-        "by_dimension": primary.get("by_dimension"),
-        "weighted_suite_hard_pass_rate": primary.get("weighted_suite_hard_pass_rate"),
-        "suite_weights": SUITE_WEIGHTS,
-        "coding": [
-            {
-                "trial_id": r.get("trial_id"),
-                "final_review": r.get("final_review"),
-                "truncated": r.get("truncated"),
-                "n_attempts": r.get("n_attempts"),
-                "attempt_files": r.get("attempt_files"),
-                "conversation": r.get("conversation"),
-                "python_checks_ok": r.get("python_checks_ok"),
-            }
-            for r in coding_rows
-        ],
-        "n_trials": len(all_trials),
-    }
-
-
-def summary_text(summary: dict[str, Any]) -> str:
-    lines = [
-        "GROUND TRUTH — do not rejudge mechanical fields.",
-        f"primary_prompt_variant: {summary.get('primary_prompt_variant')}",
-        f"weighted_suite_hard_pass_rate (primary): {summary.get('weighted_suite_hard_pass_rate')}",
-        "",
-        "== by prompt variant ==",
-    ]
-    for name, block in (summary.get("by_prompt_variant") or {}).items():
-        lines.append(f"{name}: weighted={block.get('weighted_suite_hard_pass_rate')} n={block.get('n_trials')}")
-    delta = summary.get("delta_instructed_minus_neutral")
-    if delta:
-        lines.append("")
-        lines.append("== delta instructed − neutral (by dimension) ==")
-        for dim, row in (delta.get("by_dimension") or {}).items():
-            lines.append(
-                f"{dim}: delta={row.get('hard_pass_rate')} instructed={row.get('instructed')} neutral={row.get('neutral')}"
-            )
-        lines.append(f"weighted delta: {delta.get('weighted_suite_hard_pass_rate')}")
-    lines.append("")
-    lines.append("== by dimension (primary) ==")
-    for dim, agg in (summary.get("by_dimension") or {}).items():
-        lines.append(f"{dim}: hard_pass_rate={agg.get('hard_pass_rate')} mode_agreement={agg.get('mode_agreement')} n={agg.get('n_counted')}")
-    lines.append("")
-    lines.append("== by case (primary) ==")
-    for cid, agg in sorted((summary.get("by_case") or {}).items()):
-        lines.append(f"{cid}: hard_pass_rate={agg.get('hard_pass_rate')} mode_agreement={agg.get('mode_agreement')} infra={agg.get('n_infra')}")
-    lines.append("")
-    lines.append("== coding ==")
-    for row in summary.get("coding") or []:
-        lines.append(
-            f"{row.get('trial_id')} verdict={row.get('final_review')} truncated={row.get('truncated')} "
-            f"attempts={row.get('n_attempts')} python_checks_ok={row.get('python_checks_ok')} "
-            f"conversation={row.get('conversation')}"
-        )
-    return "\n".join(lines) + "\n"
+def _make_client(cfg: dict[str, Any], model: dict[str, Any], interrupt_event: threading.Event, on_live_armed: Callable[[], None]) -> BenchClient:
+    return BenchClient(
+        base_url=cfg["base_url"],
+        api_key=str(cfg["api_key"]),
+        model=str(model["name"]),
+        connect_timeout_s=float(cfg["connect_timeout_s"]),
+        interrupt_event=interrupt_event,
+        on_live_armed=on_live_armed,
+    )
 
 
 def run_benchmark(
@@ -419,10 +369,14 @@ def run_benchmark(
     suites: list[str],
     out_root: Path,
     prompt_variants: list[str] | None = None,
+    verbose: bool = False,
 ) -> Path:
     run_dir = out_root / _now_stamp()
     run_dir.mkdir(parents=True, exist_ok=True)
     write_yaml(run_dir / "config.snapshot.yaml", snapshot_config(cfg))
+    copy_judge_bundle(run_dir)
+    snapshot_prompts(run_dir)
+    write_results_readme(run_dir)
     catalog = all_cases()
     all_trials: list[dict[str, Any]] = []
     coding_rows: list[dict[str, Any]] = []
@@ -556,20 +510,22 @@ def run_benchmark(
                 profile["name"] = profile_name
                 dest_profile = run_dir / mdir_name / profile_name
                 dest_profile.mkdir(parents=True, exist_ok=True)
-                client = BenchClient(
-                    base_url=cfg["base_url"],
-                    api_key=str(cfg["api_key"]),
-                    model=str(model["name"]),
-                    interrupt_event=interrupt_event,
-                    on_live_armed=on_live_armed,
-                )
+                client = _make_client(cfg, model, interrupt_event, on_live_armed)
                 register_client(client)
                 tool_case_ids = [c for c in case_ids if c != "C01"]
+                tools_timeout = _suite_timeout(cfg, "tools")
+                tools_max_tokens = _suite_max_tokens(cfg, "tools")
+                log_flush_bytes = int(cfg.get("log_flush_bytes") or 256)
                 if tool_case_ids:
                     pending_line = True
                     t0 = line_start(f"preflight  {profile_name}")
                     client.raise_if_interrupted()
-                    pre = run_preflight(client, profile)
+                    pre = run_preflight(
+                        client,
+                        profile,
+                        request_timeout_s=tools_timeout,
+                        max_tokens=tools_max_tokens,
+                    )
                     pending_line = False
                     if pre.get("ok"):
                         line_ok(t0)
@@ -623,6 +579,8 @@ def run_benchmark(
                         sweep_rows = []
                         sweep_suite = str(sweep_cfg.get("suite") or "tools")
                         sweep_ids = ((cfg.get("suites") or {}).get(sweep_suite) or {}).get("cases") or []
+                        sweep_timeout = _suite_timeout(cfg, sweep_suite)
+                        sweep_max_tokens = _suite_max_tokens(cfg, sweep_suite)
                         for temp in sweep_cfg.get("temperatures") or []:
                             for cid in sweep_ids:
                                 if cid not in catalog or cid == "C01" or cid not in tool_case_ids:
@@ -643,9 +601,24 @@ def run_benchmark(
                                         seed=seed,
                                     )
                                 )
-                                res = run_tool_or_agent_case(
-                                    client=client, case=bound, sampler=sampler, preflight=pre, repeat=0
-                                )
+                                sweep_raw = dest / f"sweep_{cid}_t{temp}.raw.txt"
+                                sweep_raw.write_bytes(b"")
+                                sweep_wire = RawWireLog(sweep_raw, flush_bytes=log_flush_bytes, verbose=verbose)
+                                try:
+                                    res = run_tool_or_agent_case(
+                                        client=client,
+                                        case=bound,
+                                        sampler=sampler,
+                                        preflight=pre,
+                                        repeat=0,
+                                        max_tokens=sweep_max_tokens,
+                                        request_timeout_s=sweep_timeout,
+                                        stream=True,
+                                        wire=sweep_wire,
+                                        progress_every_bytes=log_flush_bytes,
+                                    )
+                                finally:
+                                    sweep_wire.close()
                                 client.raise_if_interrupted()
                                 hp = bool((res.get("score") or {}).get("hard_pass"))
                                 finish_trial_console(t0, hp, score_reasons(res.get("score")))
@@ -662,16 +635,53 @@ def run_benchmark(
                         case = catalog[cid]
                         bound = apply_prompt_variant(case, system_text)
                         nrep = repeats_for(cfg, case["suite"], profile_name)
+                        suite_name = case["suite"]
+                        case_timeout = _suite_timeout(cfg, suite_name)
+                        case_max_tokens = _suite_max_tokens(cfg, suite_name)
+                        tdir = dest / "cases" / cid
+                        tdir.mkdir(parents=True, exist_ok=True)
+                        if case.get("purpose") and case.get("expected_answer"):
+                            write_case_md(
+                                tdir / "CASE.md",
+                                case_id=cid,
+                                purpose=str(case["purpose"]),
+                                expected_answer=str(case["expected_answer"]),
+                            )
                         for rep in range(nrep):
                             seed = choose_seed(profile, cid, rep, variant_name)
                             sampler = sampler_kwargs(profile, model, seed)
                             pending_line = True
-                            tdir = dest / "cases" / cid
-                            pending_trial_jsons = [tdir / f"trial_{rep + 1:03d}.json"]
+                            json_path = tdir / f"trial_{rep + 1:03d}.json"
+                            txt_path = tdir / f"trial_{rep + 1:03d}.txt"
+                            raw_path = tdir / f"trial_{rep + 1:03d}.raw.txt"
+                            pending_trial_jsons = [json_path]
+                            trial_id = opaque_id(str(model["name"]), profile_name, variant_name, cid, str(rep))
+                            trial: dict[str, Any] = {
+                                "trial_id": trial_id,
+                                "case_id": cid,
+                                "suite": suite_name,
+                                "repeat": rep,
+                                "seed": seed,
+                                "prompt_variant": variant_name,
+                                "in_progress": True,
+                            }
+                            snapshot_trial_files(json_path, txt_path, trial)
+                            raw_path.write_bytes(b"")
+                            wire = RawWireLog(raw_path, flush_bytes=log_flush_bytes, verbose=verbose)
+
+                            def on_snapshot(
+                                partial: dict[str, Any],
+                                trial=trial,
+                                json_path=json_path,
+                                txt_path=txt_path,
+                            ) -> None:
+                                trial.update(partial)
+                                snapshot_trial_files(json_path, txt_path, trial)
+
                             t0 = line_start(
                                 trial_label(
                                     case_id=cid,
-                                    suite=case["suite"],
+                                    suite=suite_name,
                                     profile=profile_name,
                                     variant=variant_name,
                                     repeat=rep,
@@ -679,38 +689,37 @@ def run_benchmark(
                                     seed=seed,
                                 )
                             )
-                            res = run_tool_or_agent_case(
-                                client=client, case=bound, sampler=sampler, preflight=pre, repeat=rep
-                            )
-                            trial_id = opaque_id(str(model["name"]), profile_name, variant_name, cid, str(rep))
-                            trial = {
-                                "trial_id": trial_id,
-                                "case_id": cid,
-                                "suite": case["suite"],
-                                "repeat": rep,
-                                "seed": seed,
-                                "prompt_variant": variant_name,
-                                **res,
-                            }
-                            payload = {k: trial[k] for k in trial if k != "messages"}
-                            payload["messages"] = trial.get("messages")
-                            write_json(tdir / f"trial_{rep + 1:03d}.json", payload)
-                            write_text(tdir / f"trial_{rep + 1:03d}.txt", trial_txt(trial))
+                            try:
+                                res = run_tool_or_agent_case(
+                                    client=client,
+                                    case=bound,
+                                    sampler=sampler,
+                                    preflight=pre,
+                                    repeat=rep,
+                                    max_tokens=case_max_tokens,
+                                    request_timeout_s=case_timeout,
+                                    stream=True,
+                                    wire=wire,
+                                    on_snapshot=on_snapshot,
+                                    progress_every_bytes=log_flush_bytes,
+                                )
+                            finally:
+                                wire.close()
+                            trial.update(res)
+                            trial["in_progress"] = False
+                            snapshot_trial_files(json_path, txt_path, trial)
                             pending_trial_jsons = []
                             all_trials.append(trial)
                             hp = bool((trial.get("score") or {}).get("hard_pass"))
                             finish_trial_console(t0, hp, score_reasons(trial.get("score")))
+                    write_summary_tree(run_dir)
 
                 if "C01" in case_ids:
                     nrep = repeats_for(cfg, "coding", profile_name)
-                    coding_client = BenchClient(
-                        base_url=cfg["base_url"],
-                        api_key=str(cfg["api_key"]),
-                        model=str(model["name"]),
-                        interrupt_event=interrupt_event,
-                        on_live_armed=on_live_armed,
-                    )
+                    coding_client = _make_client(cfg, model, interrupt_event, on_live_armed)
                     register_client(coding_client)
+                    coding_timeout = _suite_timeout(cfg, "coding")
+                    coding_max_tokens = int(cfg["ctx_size"])
                     for rep in range(nrep):
                         seed = choose_seed(profile, "C01", rep)
                         sampler = sampler_kwargs(profile, model, seed)
@@ -738,6 +747,12 @@ def run_benchmark(
                             sampler=sampler,
                             trial_dir=cdir,
                             max_rounds=int(cfg.get("max_coding_rounds") or 7),
+                            max_tokens=coding_max_tokens,
+                            request_timeout_s=coding_timeout,
+                            stream=True,
+                            log_flush_bytes=log_flush_bytes,
+                            verbose=verbose,
+                            on_progress_bytes=log_flush_bytes,
                         )
                         row.update({
                             "trial_id": trial_id,
@@ -746,6 +761,7 @@ def run_benchmark(
                             "repeat": rep,
                             "seed": seed,
                             "prompt_variant": None,
+                            "in_progress": False,
                             "transcript_text": (cdir / "conversation.txt").read_text(encoding="utf-8"),
                         })
                         write_json(
@@ -762,6 +778,7 @@ def run_benchmark(
                         if not row.get("python_checks_ok"):
                             reasons.append("python_checks")
                         finish_trial_console(t0, coding_ok, reasons)
+                    write_summary_tree(run_dir)
     except KeyboardInterrupt:
         interrupted = True
         disarm_second_ctrl_c()
@@ -779,15 +796,12 @@ def run_benchmark(
             if win_ctrl_unhook is not None:
                 win_ctrl_unhook()
 
-    summary = build_summary(all_trials, coding_rows)
     if interrupted:
-        summary["interrupted"] = True
         write_text(
             run_dir / "INTERRUPTED.txt",
             f"interrupted by user\n{interrupt_at}\n",
         )
-    write_json(run_dir / "summary.json", summary)
-    write_text(run_dir / "summary.txt", summary_text(summary))
+    write_summary_tree(run_dir)
     write_json(
         run_dir / "MANIFEST.json",
         {
@@ -801,6 +815,12 @@ def run_benchmark(
             ],
             "suites": list(suites),
             "interrupted": interrupted,
+            "launcher": {
+                "path": cfg.get("_launcher"),
+                "kind": cfg.get("_launcher_kind"),
+                "ctx_size": cfg.get("ctx_size"),
+                "api_key": "***",
+            },
         },
     )
     write_json(run_dir / "trial_id_map.json", {

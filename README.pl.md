@@ -16,7 +16,7 @@ Efekt finalny powinien być oceniony przez sędziego, człowieka albo większy L
 - Python 3.10+
 - Działający serwer OpenAI-compatible (domyślnie `http://127.0.0.1:8080/v1`)
 - Szablon czatu modelu **musi obsługiwać narzędzia**.
-- `llama_bat` w configu to launcher serwera (domyślnie `llama.bat` obok tego README); bench czyta z niego **tylko** `--api-key` (nie wklejaj klucza do yaml). Nadpisanie: env `BENCH_API_KEY` albo `api_key` w yaml. `llama.bat` jest w `.gitignore` — skopiuj go z [`llama.bat.example`](llama.bat.example) i edytuj lokalnie.
+- `launcher` w configu to launcher serwera (domyślnie `../llama.bat` z katalogu `bench/`); bench czyta z niego **`--api-key`** oraz **`--ctx-size` / `--ctx_size` / `-c`**. Brak ctx = 16384 (to jest `max_tokens` dla C01; nie zmienia działającego serwera). Nie wklejaj klucza do yaml. Nadpisanie: env `BENCH_API_KEY` albo `api_key` w yaml. `llama.bat` / `llama.sh` są w `.gitignore` — skopiuj z [`llama.bat.example`](llama.bat.example) albo [`llama.sh.example`](llama.sh.example) i edytuj lokalnie.
 
 ```text
 cd bench
@@ -28,7 +28,9 @@ python -m pip install -r requirements.txt
 
 1. Ściągnij serwer, który hostuje wagi GGUF (albo inne) i wystawia OpenAI-compatible `POST /v1/chat/completions`. Aktualnie używany jest tu llama.cpp `llama-server` przez lokalny `llama.bat`. Ale Ollama, LM Studio i vLLM również będą działać, gdy `base_url` i klucz API się zgadzają między uruchomionym serwerem hostującym modele i plikiem konfiguracyjnym.
 
-2. Dla llama.cpp (dla innych stwórz podobny launcher) skopiuj [`llama.bat.example`](llama.bat.example) do `llama.bat` i wyedytuj tę kopię: uzupełnij ścieżkę do miejsca gdzie zainstalowałeś `llama-server.exe`, podaj swój katalog z modelami `--models-dir`, `--api-key`. Git ignoruje `llama.bat`, więc lokalne ścieżki i klucz nie idą na remote.
+2. Dla llama.cpp skopiuj [`llama.bat.example`](llama.bat.example) do `llama.bat` (albo [`llama.sh.example`](llama.sh.example) do `llama.sh`) i wyedytuj tę kopię: uzupełnij ścieżkę do `llama-server`, katalog modeli `--models-dir`, `--ctx-size`, `--api-key`. Git ignoruje `llama.bat` i `llama.sh`, więc lokalne ścieżki i klucz nie idą na remote.
+
+W yaml jest tylko pole `launcher`. Rodzaj to stem nazwy pliku małymi literami (`llama.bat` / `llama.sh` → `llama`). Zarejestrowane rodzaje: `llama` (parsowany), `ollama`, `vllm`, `lmstudio` (jeszcze niezaimplementowane — bench odmówi). Inny serwer może działać, gdy `launcher` wskazuje plik w stylu llama, a `base_url` zgadza się z już uruchomionym serwerem.
 
 ```text
 copy llama.bat.example llama.bat
@@ -67,7 +69,10 @@ curl -H "Authorization: Bearer <api_key>" http://127.0.0.1:8080/v1/models
 
 ```text
 python run.py run
+python run.py run --verbose
 ```
+
+`--verbose` wypisuje każde oceniane wywołanie HTTP jako `\n\nRequest:\n` plus surowe ciało POST po wysłaniu, potem `\n\nResponse:\n` plus pełne ciało odpowiedzi po odbiorze. Nie dotyczy preflight ani `summarize`.
 
 7. Po uruchomieniu bench tworzy `bench/results/20260906T100000Z` z logami i wynikami z przebiegu. 
 W trakcie podaje też podstawowe informacje o postępie, żeby można było zobaczyć czy w ogóle działa jak powinien, czy warto już zatrzymać i poprawić.
@@ -225,7 +230,16 @@ W configu jest jeszcze opcja `optional_temp_sweep.enabled: true`. Jest ona przez
 
 ### Wyniki
 
-Po przebiegu bench tworzy katalog z datą, na przykład `bench/results/20260906T100000Z`. Tam ląduje wszystko, co jest potrzebne do oceny: transkrypty rozmów, skrót które testy przeszły, i kopia konfiguracji z jaką było uruchamiane.
+Po przebiegu bench tworzy katalog z datą, na przykład `bench/results/20260906T100000Z`. Tam ląduje wszystko, co jest potrzebne do oceny: transkrypty rozmów, surowy HTTP w `*.raw.txt`, warstwowe `summary.json`, i kopia konfiguracji. Wymagane limity ściany czasu na jedno wywołanie HTTP: `tools: 60s`, `agent: 90s`, `coding: 2400s`. Po przekroczeniu tria dostaje `TIMEOUT`: pętla modelu, która nie kończy generacji, albo serwer, który przestał odpowiadać — bench tego nie rozróżnia. Nieudany TCP w `connect_timeout_s` (2s) to `INFRA_ERROR`, nie `TIMEOUT`. `max_tokens` tools/agent = 1024; C01 bierze `ctx_size` z launchera (domyślnie 16384).
+
+Żeby przeliczyć podsumowania dla zestawu drzew modeli (bez ponownego odpalania modeli):
+
+```text
+mkdir results\zestaw-do-sedziego
+xcopy /E /I results\20260908T045257Z\gemma-4-12b-it-Q4_K_M results\zestaw-do-sedziego\gemma-4-12b-it-Q4_K_M
+xcopy /E /I results\20260909T065153Z\mistralai_Mistral-Small-3.2-24B-Instruct-2506-Q4_K_M results\zestaw-do-sedziego\mistralai_Mistral-Small-3.2-24B-Instruct-2506-Q4_K_M
+python run.py summarize results\zestaw-do-sedziego
+```
 
 Jako punkt startowy są dwa miejsca: `summary.txt` mówi, co przeszło a co nie. W katalogach `cases/` leżą konkretne rozmowy — plik `.txt` czyta się jak czat. Gdy coś padnie, transkrypt pokazuje, czy model wołał narzędzie, zgadywał miasto, czy wkleił do odpowiedzi śmieci ze szablonu.
 
@@ -247,6 +261,7 @@ results/<timestamp>/
     coding/trial_001/        # tylko gdy leciało kodowanie
       conversation.json
       conversation.txt
+      conversation.raw.txt
       attempts/
       tool_client.py
       python_checks.json
@@ -255,15 +270,14 @@ results/<timestamp>/
     <prompt_variant>/
       SYSTEM.txt
       temp_sweep.json        # tylko przy włączonym sweepie
-      cases/<id>/trial_001.{txt,json}
+      cases/<id>/CASE.md
+      cases/<id>/trial_001.{txt,json,raw.txt}
 ```
 
 
 ## Sędzia
 
-Automatyczne 0/1 nie kończy oceny. Bench łapie oczywiste rzeczy — złe narzędzie, zły JSON, wyciek szablonu do czatu — ale nie rozstrzyga, czy pytanie o brakujące miasto było rozsądne, ani czy recenzja kodu nie była samouwielbieniem, peanem na swoją cześć. Tego automat nie umie, i dlatego na początku dokumentu jest mowa o sędzi.
-
-Katalog może oceniać człowiek albo większy model. Albo kilka katalogów jeśli więcej modeli brało udział w testach. W [`bench/judge/`](bench/judge/) są kryteria i gotowy prompt, gdy chcesz żeby LLM zrobił to w miarę powtarzalnie. Na start wystarczy przeczytać `summary.txt` i transkrypty; schemat JSON sędziego jest opcjonalny.
+Automatyczne 0/1 nie kończy oceny. Sędziemu dajesz katalog wyników (ma własne `README.md`, `judge/`, `CASE.md`, transkrypty). Nie oczekuj, że otworzy to repo. Mechaniczny ground truth to pliki trial plus `summary.json` wariantu promptu; podsumowania greedy/real, modelu i korzenia to średnie z nagłówków dzieci.
 
 
 ### Interpretacja
@@ -279,7 +293,7 @@ Profil `greedy` (temperatura 0) jest po to, żeby zobaczyć czy w ogóle działa
 
 | Ścieżka                                                              | Rola                                                                                          |
 | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `[llama.bat.example](llama.bat.example)`                             | Szablon lokalnego launchera llama-server (`--models-dir`, `--ctx-size`, `--jinja` — wymagane do `tools`). Skopiuj do `llama.bat` i edytuj; ten plik jest gitignored. |
+| `[llama.bat.example](llama.bat.example)` / `[llama.sh.example](llama.sh.example)` | Szablon lokalnego launchera llama-server (`--models-dir`, `--ctx-size`, `--jinja` — wymagane do `tools`). Skopiuj do `llama.bat` albo `llama.sh` i edytuj; te pliki są gitignored. |
 | `[bench/](bench/)`                                                   | Cały benchmark: CLI, przypadki, mocki, sędzia (pliki, bez wołania API).                       |
 | `[bench/config.yaml.example](bench/config.yaml.example)`             | Endpoint, modele, profile samplera, suity i liczba powtórzeń. Do skopiowania do `config.yaml` |
 | `[bench/src/bench/](bench/src/bench/)`                               | Kod: klient, preflight, runner, twarde 0/1, pętla kodowania.                                  |
@@ -291,4 +305,4 @@ Profil `greedy` (temperatura 0) jest po to, żeby zobaczyć czy w ogóle działa
 
 ### Poza projektem
 
-RAG, GUI, voice, research w internecie, safety red-team, **streaming** tool-calli (inna ścieżka w llama.cpp).
+RAG, GUI, voice, research w internecie, safety red-team.

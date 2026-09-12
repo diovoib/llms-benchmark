@@ -7,9 +7,9 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from bench.client import BenchClient
+from bench.client import BenchClient, ChatResult
 from bench.paths import coding_assets
-from bench.results_io import write_json, write_text
+from bench.results_io import RawWireLog, write_json, write_text
 
 REVIEW_OK = "FINAL_REVIEW: OK"
 REVIEW_NOK = "FINAL_REVIEW: NOK"
@@ -80,7 +80,7 @@ def coding_user_prompt(*, spec: str, contract: str, max_rounds: int) -> str:
         "Napisz program tool_client.py dla serwera zgodnego z OpenAI Chat Completions "
         "(endpoint chat/completions), zgodnie ze specyfikacją i kontraktem poniżej.\n"
         "Nie masz narzędzi. Nie uruchamiasz żadnego kodu. Cała praca jest w tej jednej odpowiedzi, w czacie.\n"
-        f"W tej odpowiedzi powtarzaj cykl: (1) zaimplementuj albo popraw kod, (2) przełącz się na recenzenta i sprawdź rozwiązanie względem specyfikacji. "
+        f"W tej odpowiedzi powtarzaj cykl: (1) zaimplementuj albo popraw kod, (2) przełącz swoją rolę na recenzenta i sprawdź rozwiązanie względem specyfikacji. "
         f"Maksymalnie {max_rounds} takich cykli. Potem zatrzymaj się.\n"
         "Każdą pełną wersję kodu umieść w osobnym bloku ```python ... ``` (plik tool_client.py, funkcja run_tool_chat), "
         "żeby było widać kolejne próby.\n"
@@ -101,6 +101,12 @@ def run_coding_trial(
     sampler: dict[str, Any],
     trial_dir: Path,
     max_rounds: int,
+    max_tokens: int,
+    request_timeout_s: float,
+    stream: bool = True,
+    log_flush_bytes: int = 256,
+    verbose: bool = False,
+    on_progress_bytes: int = 256,
 ) -> dict[str, Any]:
     trial_dir.mkdir(parents=True, exist_ok=True)
     attempts_dir = trial_dir / "attempts"
@@ -113,8 +119,52 @@ def run_coding_trial(
     user = coding_user_prompt(spec=spec, contract=contract, max_rounds=max_rounds)
 
     messages: list[dict[str, Any]] = [{"role": "user", "content": user}]
+    conv_json = trial_dir / "conversation.json"
+    conv_txt = trial_dir / "conversation.txt"
+    raw_path = trial_dir / "conversation.raw.txt"
+    write_json(
+        conv_json,
+        {"in_progress": True, "messages": messages, "infra": None},
+    )
+    write_text(conv_txt, f"in_progress: true\n[user]\n{user}\n")
+    raw_path.write_bytes(b"")
+    wire = RawWireLog(raw_path, flush_bytes=log_flush_bytes, verbose=verbose)
+    wire.begin_http_turn(0)
+
+    def on_progress(partial: ChatResult) -> None:
+        live = [*messages, partial.to_message()]
+        write_json(
+            conv_json,
+            {
+                "in_progress": True,
+                "messages": live,
+                "finish_reason": partial.finish_reason,
+                "infra": None,
+                "partial": True,
+            },
+        )
+        parts = [f"in_progress: true\n"]
+        for msg in live:
+            parts.append(f"[{msg.get('role')}]\n{msg.get('content') or ''}\n")
+        write_text(conv_txt, "".join(parts))
+
     client.raise_if_interrupted()
-    result = client.chat(messages, tools=None, tool_choice=None, **sampler)
+    try:
+        result = client.chat(
+            messages,
+            tools=None,
+            tool_choice=None,
+            max_tokens=max_tokens,
+            stream=stream,
+            request_timeout_s=request_timeout_s,
+            on_wire=wire.on_wire,
+            on_progress=on_progress,
+            progress_every_bytes=on_progress_bytes,
+            **sampler,
+        )
+    finally:
+        wire.finish_http_turn(force=True)
+        wire.close()
     assistant = result.to_message()
     if result.error and not assistant.get("content"):
         assistant["content"] = ""
@@ -122,6 +172,7 @@ def run_coding_trial(
     content = result.content or ""
 
     conv = {
+        "in_progress": False,
         "messages": messages,
         "finish_reason": result.finish_reason,
         "infra": None if result.ok else result.infra_code,

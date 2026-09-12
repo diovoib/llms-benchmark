@@ -474,7 +474,7 @@ SUITE_WEIGHTS = {"tools": 1.0, "agent": 2.0, "coding": 0.0}
 
 def aggregate_trials(trials: list[dict[str, Any]]) -> dict[str, Any]:
     counted = list(trials)
-    infra_codes = {"INFRA_ERROR", "CONTEXT_OVERFLOW"}
+    infra_codes = {"INFRA_ERROR", "CONTEXT_OVERFLOW", "TIMEOUT"}
     infra = [
         t
         for t in trials

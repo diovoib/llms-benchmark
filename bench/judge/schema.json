@@ -55,6 +55,7 @@
                     "REGRESSION",
                     "CONTEXT_OVERFLOW",
                     "INFRA_ERROR",
+                    "TIMEOUT",
                     "JUDGE_UNSTABLE",
                     "RUBBER_STAMP_REVIEW",
                     "ITERATION_PROTOCOL_BREAK",

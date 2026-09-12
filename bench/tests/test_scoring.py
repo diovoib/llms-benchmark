@@ -815,9 +815,25 @@ class TestStopPolicyAndSideEffects:
 class TestInfraAndAggregation:
     def test_failed_http_turn_is_infra_error(self) -> None:
         case = _case("T01_en")
-        score = _tools_score(case, chat_infra("INFRA_ERROR", "timeout: deadline"))
+        score = _tools_score(case, chat_infra("INFRA_ERROR", "HTTP 500: internal"))
         assert score["hard_pass"] is False
         assert score["violations"] == ["INFRA_ERROR"]
+
+    def test_timeout_is_scored_as_timeout_not_infra_error(self) -> None:
+        case = _case("T01_en")
+        score = _tools_score(case, chat_infra("TIMEOUT", "request_timeout_s exceeded"))
+        assert score["hard_pass"] is False
+        assert score["violations"] == ["TIMEOUT"]
+        assert "INFRA_ERROR" not in score["violations"]
+
+    def test_timeout_counts_in_n_infra(self) -> None:
+        trials = [
+            {"score": {"hard_pass": True, "violations": []}, "mode_key": "ok"},
+            {"score": {"hard_pass": False, "violations": ["TIMEOUT"]}, "mode_key": "timeout"},
+        ]
+        agg = aggregate_trials(trials)
+        assert agg["n_trials"] == 2
+        assert agg["n_infra"] == 1
 
     def test_context_overflow_is_a_distinct_infra_code(self) -> None:
         case = _case("T01_en")
@@ -1071,3 +1087,13 @@ class TestAgentGuessedRequiredArg:
         ]
         score = score_agent_trial(case, steps, final, hit_max_steps=False)
         assert "GUESSED_REQUIRED_ARG" in score["violations"]
+
+
+class TestCaseProse:
+    def test_language_twins_share_one_purpose_and_expected_answer(self) -> None:
+        catalog = all_cases()
+        assert catalog["T01_pl"]["purpose"] == catalog["T01_en"]["purpose"]
+        assert catalog["T01_pl"]["expected_answer"] == catalog["T01_en"]["expected_answer"]
+        for cid, row in catalog.items():
+            assert row.get("purpose"), cid
+            assert row.get("expected_answer"), cid

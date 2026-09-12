@@ -39,6 +39,7 @@ def _get_json(
     api_key: str | None = None,
     *,
     client: BenchClient | None = None,
+    timeout_s: float,
 ) -> tuple[int | None, Any]:
     if client is not None:
         client.raise_if_interrupted()
@@ -47,7 +48,7 @@ def _get_json(
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         req = Request(url, headers=headers)
-        with urlopen(req, timeout=60) as resp:
+        with urlopen(req, timeout=timeout_s) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
             try:
                 status, body = resp.status, json.loads(raw)
@@ -72,6 +73,7 @@ def _post_json(
     api_key: str | None = None,
     *,
     client: BenchClient | None = None,
+    timeout_s: float,
 ) -> tuple[int | None, Any]:
     if client is not None:
         client.raise_if_interrupted()
@@ -81,7 +83,7 @@ def _post_json(
         headers["Authorization"] = f"Bearer {api_key}"
     req = Request(url, data=data, headers=headers, method="POST")
     try:
-        with urlopen(req, timeout=60) as resp:
+        with urlopen(req, timeout=timeout_s) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
             try:
                 status, payload = resp.status, json.loads(raw)
@@ -129,11 +131,12 @@ def collect_server_info(
     api_key: str | None = None,
     *,
     client: BenchClient | None = None,
+    timeout_s: float,
 ) -> dict[str, Any]:
     root = _root(base_url)
-    health_status, health = _get_json(f"{root}/health", api_key, client=client)
-    props_status, props = _get_json(f"{root}/props", api_key, client=client)
-    models_status, models = _get_json(f"{base_url.rstrip('/')}/models", api_key, client=client)
+    health_status, health = _get_json(f"{root}/health", api_key, client=client, timeout_s=timeout_s)
+    props_status, props = _get_json(f"{root}/props", api_key, client=client, timeout_s=timeout_s)
+    models_status, models = _get_json(f"{base_url.rstrip('/')}/models", api_key, client=client, timeout_s=timeout_s)
     chat_format = None
     build = None
     if isinstance(props, dict):
@@ -178,7 +181,13 @@ def _make_renderer(client: BenchClient, common: dict[str, Any]) -> TemplateRende
         last_error = None
         saw_missing = False
         for url in apply_urls:
-            status, payload = _post_json(url, body, client.api_key, client=client)
+            status, payload = _post_json(
+                url,
+                body,
+                client.api_key,
+                client=client,
+                timeout_s=float(common["request_timeout_s"]),
+            )
             if status in (404, 405) or status is None:
                 saw_missing = True
                 last_error = _error_message(payload)
@@ -210,8 +219,19 @@ def _make_renderer(client: BenchClient, common: dict[str, Any]) -> TemplateRende
     return TemplateRenderer(apply_template=apply_template, chat=chat)
 
 
-def run_preflight(client: BenchClient, sampler: dict[str, Any]) -> dict[str, Any]:
-    info = collect_server_info(client.base_url, getattr(client, "api_key", None), client=client)
+def run_preflight(
+    client: BenchClient,
+    sampler: dict[str, Any],
+    *,
+    request_timeout_s: float,
+    max_tokens: int,
+) -> dict[str, Any]:
+    info = collect_server_info(
+        client.base_url,
+        getattr(client, "api_key", None),
+        client=client,
+        timeout_s=request_timeout_s,
+    )
     client.raise_if_interrupted()
     messages = [{"role": "user", "content": "Reply with the single word pong."}]
     common = dict(
@@ -222,9 +242,11 @@ def run_preflight(client: BenchClient, sampler: dict[str, Any]) -> dict[str, Any
         repeat_penalty=1.0,
         seed=1,
         chat_template_kwargs=sampler.get("chat_template_kwargs"),
+        stream=False,
+        request_timeout_s=request_timeout_s,
     )
-    without = client.chat(messages, **common)
-    with_tools = client.chat(messages, tools=[LONG_TOOL, GET_TIME], **common)
+    without = client.chat(messages, max_tokens=max_tokens, **common)
+    with_tools = client.chat(messages, tools=[LONG_TOOL, GET_TIME], max_tokens=max_tokens, **common)
     jinja_required = False
     tools_dropped = False
     usage_missing = False
@@ -258,6 +280,7 @@ def run_preflight(client: BenchClient, sampler: dict[str, Any]) -> dict[str, Any
         [{"role": "user", "content": "I need the current time and the latest news, both in this same reply."}],
         tools=[GET_TIME, GET_NEWS],
         parallel_tool_calls=True,
+        max_tokens=max_tokens,
         **common,
     )
     if not par.ok:

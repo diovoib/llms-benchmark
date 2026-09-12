@@ -1,4 +1,4 @@
-"""Windows-friendly launcher: python bench/run.py run --config bench/config.example.yaml"""
+"""Windows-friendly launcher: python bench/run.py run --config bench/config.yaml.example"""
 
 from __future__ import annotations
 
