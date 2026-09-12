@@ -9,7 +9,28 @@ from typing import Any, Callable
 import httpx
 
 
-INFRA_CODES = frozenset({"INFRA_ERROR", "CONTEXT_OVERFLOW", "TIMEOUT"})
+INFRA_CODES = frozenset({"INFRA_ERROR", "CONTEXT_OVERFLOW"})
+GENERATION_STALL_CAP_S = 5.0
+
+
+def generation_stall_s(request_timeout_s: float) -> float:
+    return min(float(request_timeout_s) / 2.0, GENERATION_STALL_CAP_S)
+
+
+def deadline_abort_code(
+    *,
+    stream: bool,
+    last_content_monotonic: float | None,
+    now_monotonic: float,
+    request_timeout_s: float,
+) -> str:
+    if not stream:
+        return "INFRA_ERROR"
+    if last_content_monotonic is None:
+        return "INFRA_ERROR"
+    if (now_monotonic - last_content_monotonic) > generation_stall_s(request_timeout_s):
+        return "INFRA_ERROR"
+    return "CASE_GENERATION_TIMEOUT"
 
 OnWire = Callable[[str, bytes], None]
 
@@ -106,10 +127,16 @@ def _new_sse_state() -> dict[str, Any]:
         "tool_calls": [],
         "finish_reason": None,
         "usage": {},
+        "last_content_monotonic": None,
     }
 
 
-def _apply_chunk(state: dict[str, Any], obj: dict[str, Any]) -> None:
+def _apply_chunk(
+    state: dict[str, Any],
+    obj: dict[str, Any],
+    *,
+    now: float | None = None,
+) -> None:
     usage = obj.get("usage")
     if isinstance(usage, dict) and usage:
         state["usage"] = usage
@@ -124,8 +151,10 @@ def _apply_chunk(state: dict[str, Any], obj: dict[str, Any]) -> None:
     if not isinstance(delta, dict):
         return
     piece = delta.get("content")
+    stamped = False
     if isinstance(piece, str) and piece:
         state["content"] += piece
+        stamped = True
     for tc in delta.get("tool_calls") or []:
         if not isinstance(tc, dict):
             continue
@@ -142,16 +171,21 @@ def _apply_chunk(state: dict[str, Any], obj: dict[str, Any]) -> None:
         slot = slots[idx]
         if tc.get("id"):
             slot["id"] = tc["id"]
+            stamped = True
         if tc.get("type"):
             slot["type"] = tc["type"]
         fn = tc.get("function") or {}
         if isinstance(fn, dict):
             if fn.get("name"):
                 slot["function"]["name"] = (slot["function"].get("name") or "") + str(fn["name"])
+                stamped = True
             if fn.get("arguments") is not None:
-                slot["function"]["arguments"] = (slot["function"].get("arguments") or "") + str(
-                    fn["arguments"]
-                )
+                arg = str(fn["arguments"])
+                slot["function"]["arguments"] = (slot["function"].get("arguments") or "") + arg
+                if arg:
+                    stamped = True
+    if stamped:
+        state["last_content_monotonic"] = time.monotonic() if now is None else now
 
 
 def _message_from_state(state: dict[str, Any]) -> dict[str, Any]:
@@ -393,7 +427,13 @@ class BenchClient:
             threading.Thread(target=_watch_deadline, name="bench-http-deadline", daemon=True).start()
             self.raise_if_interrupted()
             if time.monotonic() >= deadline:
-                return self._timeout(started, stream=stream, state=_new_sse_state(), http_status=resp.status_code)
+                return self._timeout(
+                    started,
+                    stream=stream,
+                    state=_new_sse_state(),
+                    http_status=resp.status_code,
+                    request_timeout_s=request_timeout_s,
+                )
             return self._read_response(
                 resp,
                 stream=stream,
@@ -402,6 +442,7 @@ class BenchClient:
                 on_wire=on_wire,
                 on_progress=on_progress,
                 progress_every_bytes=progress_every_bytes,
+                request_timeout_s=request_timeout_s,
             )
         except (httpx.ConnectTimeout, httpx.ConnectError) as exc:
             self.raise_if_interrupted()
@@ -420,7 +461,13 @@ class BenchClient:
         except Exception as exc:
             self.raise_if_interrupted()
             if time.monotonic() >= deadline:
-                return self._timeout(started, stream=stream, state=_new_sse_state(), http_status=None)
+                return self._timeout(
+                    started,
+                    stream=stream,
+                    state=_new_sse_state(),
+                    http_status=None,
+                    request_timeout_s=request_timeout_s,
+                )
             return ChatResult(
                 ok=False,
                 infra_code="INFRA_ERROR",
@@ -438,20 +485,27 @@ class BenchClient:
         stream: bool,
         state: dict[str, Any],
         http_status: int | None,
+        request_timeout_s: float,
     ) -> ChatResult:
         self.close_live()
+        code = deadline_abort_code(
+            stream=stream,
+            last_content_monotonic=state.get("last_content_monotonic"),
+            now_monotonic=time.monotonic(),
+            request_timeout_s=request_timeout_s,
+        )
         if stream:
             return _result_from_state(
                 state,
                 latency_s=time.perf_counter() - started,
                 ok=False,
-                infra_code="TIMEOUT",
+                infra_code=code,
                 error="request_timeout_s exceeded",
                 http_status=http_status,
             )
         return ChatResult(
             ok=False,
-            infra_code="TIMEOUT",
+            infra_code=code,
             error="request_timeout_s exceeded",
             latency_s=time.perf_counter() - started,
             http_status=http_status,
@@ -467,6 +521,7 @@ class BenchClient:
         on_wire: OnWire | None,
         on_progress: Callable[[ChatResult], None] | None = None,
         progress_every_bytes: int = 256,
+        request_timeout_s: float,
     ) -> ChatResult:
         state = _new_sse_state()
         buf = bytearray()
@@ -477,7 +532,13 @@ class BenchClient:
                 if time.monotonic() >= deadline:
                     if chunk and on_wire is not None:
                         on_wire("response", chunk)
-                    return self._timeout(started, stream=stream, state=state, http_status=resp.status_code)
+                    return self._timeout(
+                        started,
+                        stream=stream,
+                        state=state,
+                        http_status=resp.status_code,
+                        request_timeout_s=request_timeout_s,
+                    )
                 if chunk:
                     if on_wire is not None:
                         on_wire("response", chunk)
@@ -511,7 +572,13 @@ class BenchClient:
         except Exception as exc:
             self.raise_if_interrupted()
             if time.monotonic() >= deadline:
-                return self._timeout(started, stream=stream, state=state, http_status=resp.status_code)
+                return self._timeout(
+                    started,
+                    stream=stream,
+                    state=state,
+                    http_status=resp.status_code,
+                    request_timeout_s=request_timeout_s,
+                )
             return ChatResult(
                 ok=False,
                 infra_code="INFRA_ERROR",

@@ -7,7 +7,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from bench.client import BenchClient, ChatResult
+from bench.client import BenchClient, ChatResult, INFRA_CODES
 from bench.paths import coding_assets
 from bench.results_io import RawWireLog, write_json, write_text
 
@@ -195,13 +195,14 @@ def run_coding_trial(
     write_text(trial_dir / "conversation.txt", "\n".join(conv_txt_parts) + "\n")
 
     finish = result.finish_reason
-    truncated = (not result.ok and result.infra_code == "CONTEXT_OVERFLOW") or (
-        result.ok and str(finish or "").lower() in {"length", "max_tokens"}
+    truncated = (
+        (not result.ok and result.infra_code in {"CONTEXT_OVERFLOW", "CASE_GENERATION_TIMEOUT"})
+        or (result.ok and str(finish or "").lower() in {"length", "max_tokens"})
     )
     verdict = parse_final_review(content)
     infra = None if result.ok else result.infra_code
-    if truncated and result.infra_code == "CONTEXT_OVERFLOW":
-        infra = "CONTEXT_OVERFLOW"
+    if infra not in INFRA_CODES:
+        infra = None
 
     blocks = extract_python_blocks(content)
     attempt_files: list[str] = []

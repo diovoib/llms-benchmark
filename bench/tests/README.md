@@ -292,15 +292,35 @@ These cases are the mechanical counterpart of the `IGNORED_OBSERVATION` rows tha
 
 **test_t01_en_http_500.** An HTTP 500 (or other connection/HTTP failure that is not context overflow) on a tools turn must be scored `INFRA_ERROR` and must not pass.
 
-**test_t01_en_timeout.** A wall-clock deadline expiry must be scored `TIMEOUT`, not `INFRA_ERROR`, and must not pass. `TIMEOUT` means the suite `request_timeout_s` was exceeded. That can be a model that never finished generating, or a dead/stuck server; the bench does not split those. A 2s connect failure stays `INFRA_ERROR`.
+**test_t01_en_case_generation_timeout.** When the scorer is already given `CASE_GENERATION_TIMEOUT`, the trial must fail with that code, not `INFRA_ERROR`. Mapping a live HTTP deadline onto that code is the client's job.
 
-**test_aggregate_timeout_in_n_infra.** `TIMEOUT` is an infrastructure code: it increments `n_infra` together with `INFRA_ERROR` and `CONTEXT_OVERFLOW`.
+**test_aggregate_case_generation_timeout.** `CASE_GENERATION_TIMEOUT` is a counted model fail: it stays in the `hard_pass_rate` denominator and does not increment `n_infra`.
 
 **test_t01_en_context_overflow_code.** When the scoring function is already given a context-overflow infrastructure code, the trial must be `CONTEXT_OVERFLOW`, not `INFRA_ERROR`. The two codes are documented separately. Mapping of raw HTTP error text such as `n_ctx` onto that code is the client's job, not the scorer's; these cases do not re-implement that mapping.
 
 **test_aggregate_infra_excluded_from_rate.** Trials tagged `INFRA_ERROR` or `CONTEXT_OVERFLOW` must be counted as infrastructure, removed from the rate denominator, and must not drag a passing sibling trial below 100%. The closed violation list says these codes are excluded from `hard_pass_rate`.
 
-**test_t18_truncated_json_then_http_500.** If the model already emitted truncated place-details JSON, and a later HTTP 500 says the server could not parse those arguments, the score must still include `BAD_JSON_TYPE`. Replacing the whole score with only `INFRA_ERROR` is what `results2` T18 rows do, and it hides a model JSON error behind infrastructure.
+**test_aggregate_all_infra.** When every trial is infrastructure (`INFRA_ERROR`, `CONTEXT_OVERFLOW`), `n_counted` is empty. `hard_pass_rate`, `mode_agreement`, and `latency_s_mean` have no model trials to average, so they are unset rather than a zero rate over infrastructure.
+
+**test_aggregate_infra_excluded_from_mode_and_means.** `mode_agreement`, latency, and token means are computed from `counted` only. An infrastructure sibling with a different `mode_key` and extreme latency or token counts must not enter those averages.
+
+**test_aggregate_infra_does_not_change_model_fail_rate.** A model fail plus a passing sibling still set the rate; an `INFRA_ERROR` trial in the same group must not shrink or inflate that denominator.
+
+**test_generation_stall_window.** The silence window before an HTTP deadline is `min(request_timeout_s / 2, 5)` seconds.
+
+**test_deadline_abort_stream_recent_content.** A stream whose last content (text or tool-call delta) is still inside that window at the deadline is `CASE_GENERATION_TIMEOUT`, not `INFRA_ERROR`.
+
+**test_deadline_abort_stream_stale_content.** A stream whose last content is older than that window at the deadline is `INFRA_ERROR`, not `CASE_GENERATION_TIMEOUT`.
+
+**test_deadline_abort_stream_content_at_stall_window.** Content whose age equals the stall window is still inside the window: `CASE_GENERATION_TIMEOUT`, not `INFRA_ERROR`.
+
+**test_deadline_abort_stream_no_content.** A stream that never produced content before the deadline is `INFRA_ERROR`, not `CASE_GENERATION_TIMEOUT`.
+
+**test_deadline_abort_without_stream.** A non-stream deadline has no token timeline and is `INFRA_ERROR` even if a last-content timestamp is present. It is not `CASE_GENERATION_TIMEOUT`.
+
+**test_deadline_abort_half_timeout_window.** When `request_timeout_s / 2` is smaller than 5s, that half-timeout is the stall window. Content inside it is `CASE_GENERATION_TIMEOUT`; content older than it is `INFRA_ERROR`.
+
+**test_t18_truncated_json_then_http_500.** If the model already emitted truncated place-details JSON, and a later HTTP 500 says the server could not parse those arguments, the score must keep `BAD_JSON_TYPE` and append `INFRA_ERROR`. It must not replace the list with only infrastructure. This transcript also has `WRONG_TOOL` (details arguments are not the returned id) and `IGNORED_OBSERVATION` (no final needles), and `hard_pass` is false.
 
 **test_t18_truncated_place_details_args.** Truncated `{` arguments on place details must be `BAD_JSON_TYPE` under catalog discipline. They must not be treated as a parsed empty object.
 
@@ -334,6 +354,6 @@ These cases are the mechanical counterpart of the `IGNORED_OBSERVATION` rows tha
 
 ### Out of scoring-function scope
 
-The HTTP client maps server error text such as `n_ctx` onto `CONTEXT_OVERFLOW` before scoring runs. The scorer already receives a ready-made infrastructure code. A missing mapping would still change the reported hard-pass rate, but it is a client contract, not a `hard_score` contract.
+The HTTP client maps server error text such as `n_ctx` onto `CONTEXT_OVERFLOW` before scoring runs. It also maps an HTTP deadline onto `CASE_GENERATION_TIMEOUT` or `INFRA_ERROR` from stream silence. The scorer already receives a ready-made code. A missing mapping would still change the reported hard-pass rate, but it is a client contract, not a `hard_score` contract.
 
 Whether the server honoured `parallel_tool_calls` is checked in the runner before scoring (the parallel weather-and-news case). Scorer tests look at the calls that were actually emitted, not at whether the server ignored the parallel flag.

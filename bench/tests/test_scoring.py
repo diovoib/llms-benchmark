@@ -8,7 +8,7 @@ from bench.spec import Case
 import pytest
 
 from bench.catalog import GET_PLACE
-from bench.client import ChatResult
+from bench.client import ChatResult, deadline_abort_code, generation_stall_s
 from bench.hard_score import (
     DIMENSIONS,
     SUITE_WEIGHTS,
@@ -882,21 +882,27 @@ class TestInfraAndAggregation:
         assert score["hard_pass"] is False
         assert score["violations"] == ["INFRA_ERROR"]
 
-    def test_t01_en_timeout(self) -> None:
+    def test_t01_en_case_generation_timeout(self) -> None:
         case = _case("T01_en")
-        score = _tools_score(case, chat_infra("TIMEOUT", "request_timeout_s exceeded"))
+        score = _tools_score(case, chat_infra("CASE_GENERATION_TIMEOUT", "request_timeout_s exceeded"))
         assert score["hard_pass"] is False
-        assert score["violations"] == ["TIMEOUT"]
+        assert score["violations"] == ["CASE_GENERATION_TIMEOUT"]
         assert "INFRA_ERROR" not in score["violations"]
 
-    def test_aggregate_timeout_in_n_infra(self) -> None:
+    def test_aggregate_case_generation_timeout(self) -> None:
         trials = [
             {"score": {"hard_pass": True, "violations": []}, "mode_key": "ok"},
-            {"score": {"hard_pass": False, "violations": ["TIMEOUT"]}, "mode_key": "timeout"},
+            {
+                "score": {"hard_pass": False, "violations": ["CASE_GENERATION_TIMEOUT"]},
+                "mode_key": "timeout",
+            },
         ]
         agg = aggregate_trials(trials)
         assert agg["n_trials"] == 2
-        assert agg["n_infra"] == 1
+        assert agg["n_infra"] == 0
+        assert agg["n_counted"] == 2
+        assert agg["n_hard_pass"] == 1
+        assert agg["hard_pass_rate"] == 0.5
 
     def test_t01_en_context_overflow_code(self) -> None:
         case = _case("T01_en")
@@ -904,6 +910,7 @@ class TestInfraAndAggregation:
             case,
             chat_infra("CONTEXT_OVERFLOW", "HTTP 400: n_ctx context length exceeded"),
         )
+        assert score["hard_pass"] is False
         assert score["violations"] == ["CONTEXT_OVERFLOW"]
         assert "INFRA_ERROR" not in score["violations"]
 
@@ -925,6 +932,147 @@ class TestInfraAndAggregation:
         assert agg["n_counted"] == 1
         assert agg["hard_pass_rate"] == 1.0
         assert agg["n_hard_pass"] == 1
+
+    def test_aggregate_all_infra(self) -> None:
+        trials = [
+            {"score": {"hard_pass": False, "violations": ["INFRA_ERROR"]}, "mode_key": "infra"},
+            {"score": {"hard_pass": False, "violations": ["INFRA_ERROR"]}, "mode_key": "stall"},
+            {
+                "score": {"hard_pass": False, "violations": ["CONTEXT_OVERFLOW"]},
+                "mode_key": "overflow",
+            },
+        ]
+        agg = aggregate_trials(trials)
+        assert agg["n_trials"] == 3
+        assert agg["n_infra"] == 3
+        assert agg["n_counted"] == 0
+        assert agg["n_hard_pass"] == 0
+        assert agg["hard_pass_rate"] is None
+        assert agg["mode_agreement"] is None
+        assert agg["latency_s_mean"] is None
+
+    def test_aggregate_infra_excluded_from_mode_and_means(self) -> None:
+        trials = [
+            {
+                "score": {"hard_pass": True, "violations": []},
+                "mode_key": "ok",
+                "latency_s": 2.0,
+                "prompt_tokens": 10,
+                "completion_tokens": 4,
+                "first_tool_response_latency_s": 0.5,
+            },
+            {
+                "score": {"hard_pass": True, "violations": []},
+                "mode_key": "ok",
+                "latency_s": 4.0,
+                "prompt_tokens": 30,
+                "completion_tokens": 8,
+                "first_tool_response_latency_s": 1.5,
+            },
+            {
+                "score": {"hard_pass": False, "violations": ["INFRA_ERROR"]},
+                "mode_key": "infra",
+                "latency_s": 100.0,
+                "prompt_tokens": 1000,
+                "completion_tokens": 1000,
+                "first_tool_response_latency_s": 50.0,
+            },
+        ]
+        agg = aggregate_trials(trials)
+        assert agg["n_counted"] == 2
+        assert agg["n_infra"] == 1
+        assert agg["mode_agreement"] == 1.0
+        assert agg["latency_s_mean"] == 3.0
+        assert agg["prompt_tokens_mean"] == 20.0
+        assert agg["completion_tokens_mean"] == 6.0
+        assert agg["first_tool_response_latency_s_mean"] == 1.0
+
+    def test_aggregate_infra_does_not_change_model_fail_rate(self) -> None:
+        trials = [
+            {"score": {"hard_pass": True, "violations": []}, "mode_key": "ok"},
+            {"score": {"hard_pass": False, "violations": ["WRONG_TOOL"]}, "mode_key": "fail"},
+            {"score": {"hard_pass": False, "violations": ["INFRA_ERROR"]}, "mode_key": "stall"},
+        ]
+        agg = aggregate_trials(trials)
+        assert agg["n_trials"] == 3
+        assert agg["n_infra"] == 1
+        assert agg["n_counted"] == 2
+        assert agg["n_hard_pass"] == 1
+        assert agg["hard_pass_rate"] == 0.5
+
+    def test_generation_stall_window(self) -> None:
+        assert generation_stall_s(60) == 5.0
+        assert generation_stall_s(10) == 5.0
+        assert generation_stall_s(8) == 4.0
+        assert generation_stall_s(4) == 2.0
+
+    def test_deadline_abort_stream_recent_content(self) -> None:
+        code = deadline_abort_code(
+            stream=True,
+            last_content_monotonic=10.0,
+            now_monotonic=14.0,
+            request_timeout_s=60,
+        )
+        assert code == "CASE_GENERATION_TIMEOUT"
+        assert code != "INFRA_ERROR"
+
+    def test_deadline_abort_stream_stale_content(self) -> None:
+        code = deadline_abort_code(
+            stream=True,
+            last_content_monotonic=10.0,
+            now_monotonic=16.0,
+            request_timeout_s=60,
+        )
+        assert code == "INFRA_ERROR"
+        assert code != "CASE_GENERATION_TIMEOUT"
+
+    def test_deadline_abort_stream_content_at_stall_window(self) -> None:
+        code = deadline_abort_code(
+            stream=True,
+            last_content_monotonic=10.0,
+            now_monotonic=15.0,
+            request_timeout_s=60,
+        )
+        assert code == "CASE_GENERATION_TIMEOUT"
+        assert code != "INFRA_ERROR"
+
+    def test_deadline_abort_stream_no_content(self) -> None:
+        code = deadline_abort_code(
+            stream=True,
+            last_content_monotonic=None,
+            now_monotonic=100.0,
+            request_timeout_s=60,
+        )
+        assert code == "INFRA_ERROR"
+        assert code != "CASE_GENERATION_TIMEOUT"
+
+    def test_deadline_abort_without_stream(self) -> None:
+        code = deadline_abort_code(
+            stream=False,
+            last_content_monotonic=99.0,
+            now_monotonic=100.0,
+            request_timeout_s=60,
+        )
+        assert code == "INFRA_ERROR"
+        assert code != "CASE_GENERATION_TIMEOUT"
+
+    def test_deadline_abort_half_timeout_window(self) -> None:
+        recent = deadline_abort_code(
+            stream=True,
+            last_content_monotonic=10.0,
+            now_monotonic=13.0,
+            request_timeout_s=8,
+        )
+        stale = deadline_abort_code(
+            stream=True,
+            last_content_monotonic=10.0,
+            now_monotonic=15.0,
+            request_timeout_s=8,
+        )
+        assert recent == "CASE_GENERATION_TIMEOUT"
+        assert recent != "INFRA_ERROR"
+        assert stale == "INFRA_ERROR"
+        assert stale != "CASE_GENERATION_TIMEOUT"
 
     def test_t18_truncated_json_then_http_500(self) -> None:
         case = _case("T18_en")
@@ -948,8 +1096,13 @@ class TestInfraAndAggregation:
             ),
         ]
         score = _agent_score(case, steps, "", hit_max_steps=False)
-        assert "BAD_JSON_TYPE" in score["violations"]
-        assert score["violations"] != ["INFRA_ERROR"]
+        assert score["hard_pass"] is False
+        assert score["violations"] == [
+            "BAD_JSON_TYPE",
+            "IGNORED_OBSERVATION",
+            "INFRA_ERROR",
+            "WRONG_TOOL",
+        ]
 
     def test_t18_truncated_place_details_args(self) -> None:
         parsed = normalize_tool_calls([openai_tool_call("get_place_details", "{")])[0]

@@ -230,7 +230,7 @@ W configu jest jeszcze opcja `optional_temp_sweep.enabled: true`. Jest ona przez
 
 ### Wyniki
 
-Po przebiegu bench tworzy katalog z datą, na przykład `bench/results/20260906T100000Z`. Tam ląduje wszystko, co jest potrzebne do oceny: transkrypty rozmów, surowy HTTP w `*.raw.txt`, warstwowe `summary.json`, i kopia konfiguracji. Wymagane limity ściany czasu na jedno wywołanie HTTP: `tools: 60s`, `agent: 90s`, `coding: 2400s`. Po przekroczeniu tria dostaje `TIMEOUT`: pętla modelu, która nie kończy generacji, albo serwer, który przestał odpowiadać — bench tego nie rozróżnia. Nieudany TCP w `connect_timeout_s` (2s) to `INFRA_ERROR`, nie `TIMEOUT`. `max_tokens` tools/agent = 1024; C01 bierze `ctx_size` z launchera (domyślnie 16384).
+Po przebiegu bench tworzy katalog z datą, na przykład `bench/results/20260906T100000Z`. Tam ląduje wszystko, co jest potrzebne do oceny: transkrypty rozmów, surowy HTTP w `*.raw.txt`, warstwowe `summary.json`, i kopia konfiguracji. Wymagane limity ściany czasu na jedno wywołanie HTTP: `tools: 60s`, `agent: 90s`, `coding: 2400s`. Jeśli ten limit minie, a strumień jeszcze produkował treść w oknie `min(request_timeout_s / 2, 5s)` przed cutoffem, trial dostaje `CASE_GENERATION_TIMEOUT` (liczony jak max_tokens). Cichy strumień, request bez streamu albo nieudany TCP w `connect_timeout_s` (2s) to `INFRA_ERROR`. `max_tokens` tools/agent = 1024; C01 bierze `ctx_size` z launchera (domyślnie 16384).
 
 Żeby przeliczyć podsumowania dla zestawu drzew modeli (bez ponownego odpalania modeli):
 

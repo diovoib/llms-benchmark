@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from bench.client import ChatResult
+from bench.client import ChatResult, INFRA_CODES
 from bench.matchers import Matcher
 from bench.spec import Case, Expect, Invocation, PromptVariant
 from bench.template_dialect import NATIVE_MARKERS
@@ -428,14 +428,17 @@ def score_agent_trial(
         if not step.get("result", {}).get("ok", True):
             infra = step.get("result", {}).get("infra_code")
             if infra:
-                return {
-                    "hard_pass": False,
-                    "excluded_from_rate": False,
-                    "violations": [infra],
-                    "notes": [],
-                    "invalidated": False,
-                    "finish_reason": step.get("result", {}).get("finish_reason"),
-                }
+                violations.append(infra)
+                hard_pass = False
+                if infra in INFRA_CODES:
+                    return {
+                        "hard_pass": False,
+                        "excluded_from_rate": False,
+                        "violations": sorted(set(violations)),
+                        "notes": notes,
+                        "invalidated": False,
+                        "finish_reason": step.get("result", {}).get("finish_reason"),
+                    }
         if leak_in_content(step.get("content") or ""):
             violations.append("LEAKED_TOOL_FORMAT")
             hard_pass = False
@@ -474,12 +477,16 @@ SUITE_WEIGHTS = {"tools": 1.0, "agent": 2.0, "coding": 0.0}
 
 
 def aggregate_trials(trials: list[dict[str, Any]]) -> dict[str, Any]:
-    counted = list(trials)
-    infra_codes = {"INFRA_ERROR", "CONTEXT_OVERFLOW", "TIMEOUT"}
+    infra_codes = set(INFRA_CODES)
     infra = [
         t
         for t in trials
         if infra_codes.intersection(t.get("score", {}).get("violations") or [])
+    ]
+    counted = [
+        t
+        for t in trials
+        if not infra_codes.intersection(t.get("score", {}).get("violations") or [])
     ]
     n_pass = sum(1 for t in counted if t.get("score", {}).get("hard_pass"))
     keys = [t.get("mode_key") for t in counted if t.get("mode_key") is not None]

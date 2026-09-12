@@ -230,7 +230,7 @@ Config also has `optional_temp_sweep.enabled: true`. It is meant only for the su
 
 ### Results
 
-After a run the bench creates a dated folder, for example `bench/results/20260906T100000Z`. That is where everything needed for scoring lands: conversation transcripts, unsparsed HTTP in `*.raw.txt`, layered `summary.json` files, and a copy of the config the run was started with. Required suite timeouts are `tools: 60s`, `agent: 90s`, `coding: 2400s` wall-clock per HTTP call. If that deadline expires the trial is `TIMEOUT`: a model that never finished generating, or a server that stopped responding — the bench does not distinguish those. A failed TCP connect within `connect_timeout_s` (2s) is `INFRA_ERROR`, not `TIMEOUT`. Tools/agent `max_tokens` is 1024; C01 uses launcher `ctx_size` (default 16384).
+After a run the bench creates a dated folder, for example `bench/results/20260906T100000Z`. That is where everything needed for scoring lands: conversation transcripts, unsparsed HTTP in `*.raw.txt`, layered `summary.json` files, and a copy of the config the run was started with. Required suite timeouts are `tools: 60s`, `agent: 90s`, `coding: 2400s` wall-clock per HTTP call. If that deadline expires while the stream still produced content within `min(request_timeout_s / 2, 5s)` of the cutoff, the trial is `CASE_GENERATION_TIMEOUT` (counted like max_tokens). A silent stream, a non-stream deadline, or a failed TCP connect within `connect_timeout_s` (2s) is `INFRA_ERROR`. Tools/agent `max_tokens` is 1024; C01 uses launcher `ctx_size` (default 16384).
 
 To rebuild summaries for a packed set of model trees (without re-running models):
 

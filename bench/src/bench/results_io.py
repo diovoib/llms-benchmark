@@ -111,7 +111,7 @@ You may still comment that a mechanically passing trial did not complete the use
 
 How to correct a judge row: copy `evidence.quote` verbatim from that trial’s transcript; change the judge 0/1 (or violation) only. Do not edit trial `hard_pass` / `violations`. If the harness looks wrong, write a note; do not “fix” it in the judge JSON.
 
-`TIMEOUT` means that HTTP call exceeded the suite `request_timeout_s`. That can be a model that never finished generating, or a server that stopped responding. The bench does not distinguish those. A failed TCP/connect within `connect_timeout_s` (2s) is `INFRA_ERROR`, not `TIMEOUT`.
+`CASE_GENERATION_TIMEOUT` means that HTTP call exceeded the suite `request_timeout_s` while the stream still produced content within `min(request_timeout_s / 2, 5s)` of the deadline — the same class of fail as max_tokens. A stream silent for longer than that window, a non-stream deadline, or a failed TCP/connect within `connect_timeout_s` (2s) is `INFRA_ERROR`.
 
 If a later HTTP status is 5xx, `*.raw.txt` for that trial should still contain the previous response and the request that received the error.
 
