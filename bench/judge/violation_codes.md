@@ -19,6 +19,7 @@ Use only these strings. Do not invent codes.
 | REGRESSION | unused | Leftover from the old multi-round coding harness. |
 | CONTEXT_OVERFLOW | infra | Server error text reports context / n_ctx overflow. Exclude from hard_pass_rate. |
 | INFRA_ERROR | infra | Connection failure or 5xx/HTTP failure that is not context overflow. A stream that stayed silent longer than min(request_timeout_s / 2, 5s) before the HTTP deadline, or a non-stream deadline with no token timeline, is this code. Exclude from hard_pass_rate. |
+| BENCH_INTERNAL_ERROR | infra | The harness was about to send a chat request whose history contains tool-call arguments that are not a JSON object. That is a bench bug (missed a bad model turn, mis-parsed it, or assembled the next request wrongly). Do not rewrite history to hide it. Exclude from hard_pass_rate. |
 | CASE_GENERATION_TIMEOUT | yes | Stream still produced content (text or tool-call deltas) within min(request_timeout_s / 2, 5s) of the suite HTTP deadline. Same class of fail as max_tokens / length: the model did not finish. Counted in hard_pass_rate. |
 | JUDGE_UNSTABLE | validation | Two judge runs disagree on scores for a trial_id. |
 | RUBBER_STAMP_REVIEW | judge only | C01: OK (or empty critique) with no real check of the code in the conversation. |

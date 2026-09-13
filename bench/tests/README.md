@@ -292,6 +292,10 @@ These cases are the mechanical counterpart of the `IGNORED_OBSERVATION` rows tha
 
 **test_t01_en_http_500.** An HTTP 500 (or other connection/HTTP failure that is not context overflow) on a tools turn must be scored `INFRA_ERROR` and must not pass.
 
+**test_t01_en_bench_internal_error.** When the scorer is given `BENCH_INTERNAL_ERROR`, the trial must fail with that code, not `INFRA_ERROR`. The harness was about to send unparsed tool arguments; that is a bench bug.
+
+**test_aggregate_bench_internal_error_excluded_from_rate.** `BENCH_INTERNAL_ERROR` is excluded from `hard_pass_rate` like other infrastructure codes. A passing sibling must stay at 100%.
+
 **test_t01_en_case_generation_timeout.** When the scorer is already given `CASE_GENERATION_TIMEOUT`, the trial must fail with that code, not `INFRA_ERROR`. Mapping a live HTTP deadline onto that code is the client's job.
 
 **test_aggregate_case_generation_timeout.** `CASE_GENERATION_TIMEOUT` is a counted model fail: it stays in the `hard_pass_rate` denominator and does not increment `n_infra`.
@@ -329,6 +333,16 @@ These cases are the mechanical counterpart of the `IGNORED_OBSERVATION` rows tha
 **test_t18_unparsed_args_not_executed.** After that truncated place-details call, the harness must not run the function as if the arguments were `{}`. Doing so turns invalid JSON into an empty-id lookup and continues the loop.
 
 **test_t18_unparsed_args_not_replayed.** The harness must not send a further chat request whose history still contains the truncated `{` arguments. That replay is what makes the server return HTTP 500 and the trial look like `INFRA_ERROR`.
+
+**test_mixed_turn_unparsed_args_execute_none.** A single tools turn that emits a well-formed London `search` together with truncated `{` place-details arguments must execute neither call, must not send a follow-up chat request, and must be scored `BAD_JSON_TYPE` without `INFRA_ERROR` or `BENCH_INTERNAL_ERROR`. Running the valid sibling would feed a fake observation into a turn that already failed to parse.
+
+**test_unparsed_arguments_block_the_chat_request.** `chat_request_internal_error` and `_build_request_body` assemble the next chat payload. History that contains a tool call whose arguments are unparsed — empty, null, a JSON non-object, truncated `{`, A03's `"{\""`, or a truncated object — must not be rewritten. The guard returns `BENCH_INTERNAL_ERROR` and must not HTTP. The body still contains the original unparsed arguments.
+
+**test_parsed_sibling_does_not_rewrite_unparsed_history.** A well-formed `search` beside an unparsed sibling must not drop either call from the assembled messages. The request is refused with `BENCH_INTERNAL_ERROR` instead of sending a sanitised history.
+
+**test_json_object_arguments_are_safe_to_send.** A JSON-object string and an already-decoded object must pass the guard. `_build_request_body` keeps them unchanged.
+
+**test_seeded_unparsed_history_is_bench_internal_error.** If case history already contains truncated `{` arguments before the first chat, the tools loop must not call the model. The trial is `BENCH_INTERNAL_ERROR`, the `{` remains in `messages`, and it is not `INFRA_ERROR`.
 
 ### Mode key and suite weights
 

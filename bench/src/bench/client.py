@@ -4,12 +4,13 @@ import json
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 
 import httpx
 
 
-INFRA_CODES = frozenset({"INFRA_ERROR", "CONTEXT_OVERFLOW"})
+BENCH_INTERNAL_ERROR = "BENCH_INTERNAL_ERROR"
+INFRA_CODES = frozenset({"INFRA_ERROR", "CONTEXT_OVERFLOW", BENCH_INTERNAL_ERROR})
 GENERATION_STALL_CAP_S = 5.0
 
 
@@ -75,6 +76,47 @@ def _overflow_blob(status: int | None, body: str) -> bool:
 
 def _chat_url(base_url: str) -> str:
     return f"{base_url.rstrip('/')}/chat/completions"
+
+
+def _tool_arguments_are_json_object(raw: Any) -> bool:
+    if isinstance(raw, dict):
+        return True
+    if not isinstance(raw, str):
+        return False
+    text = raw.strip()
+    if text == "":
+        return False
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError:
+        return False
+    return isinstance(value, dict)
+
+
+def chat_request_internal_error(messages: list[dict[str, Any]]) -> ChatResult | None:
+    """If history would put non-object tool arguments on the wire, that is a bench bug."""
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        raw_calls = message.get("tool_calls")
+        if not isinstance(raw_calls, list):
+            continue
+        for call in raw_calls:
+            if not isinstance(call, dict):
+                continue
+            fn = call.get("function")
+            arguments = fn.get("arguments") if isinstance(fn, dict) else None
+            if _tool_arguments_are_json_object(arguments):
+                continue
+            return ChatResult(
+                ok=False,
+                infra_code=BENCH_INTERNAL_ERROR,
+                error=(
+                    "bench assembled a chat request with tool-call arguments "
+                    "that are not a JSON object"
+                ),
+            )
+    return None
 
 
 def _build_request_body(
@@ -284,6 +326,32 @@ def _pop_sse_objects(buf: bytearray) -> list[dict[str, Any]]:
     return out
 
 
+class ChatClient(Protocol):
+    def raise_if_interrupted(self) -> None: ...
+
+    def chat(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: Any | None = None,
+        parallel_tool_calls: bool | None = None,
+        temperature: float,
+        top_p: float,
+        top_k: int,
+        min_p: float,
+        repeat_penalty: float,
+        seed: int | None,
+        chat_template_kwargs: dict[str, Any] | None,
+        max_tokens: int | None = None,
+        stream: bool = False,
+        request_timeout_s: float,
+        on_wire: OnWire | None = None,
+        on_progress: Callable[[ChatResult], None] | None = None,
+        progress_every_bytes: int = 256,
+    ) -> ChatResult: ...
+
+
 class BenchClient:
     def __init__(
         self,
@@ -370,6 +438,9 @@ class BenchClient:
         on_progress: Callable[[ChatResult], None] | None = None,
         progress_every_bytes: int = 256,
     ) -> ChatResult:
+        blocked = chat_request_internal_error(messages)
+        if blocked is not None:
+            return blocked
         body = _build_request_body(
             model=self.model,
             messages=messages,

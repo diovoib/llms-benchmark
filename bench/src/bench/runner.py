@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from bench.client import BenchClient, ChatResult
+from bench.client import BenchClient, ChatClient, ChatResult, chat_request_internal_error
 from bench.coding_loop import run_coding_trial
 from bench.config import model_dir_name, resolve_temperature, snapshot_config
 from bench.hard_score import (
@@ -147,7 +147,7 @@ def mark_interrupted_if_present(paths: list[Path]) -> None:
 
 def run_tool_or_agent_case(
     *,
-    client: BenchClient,
+    client: ChatClient,
     case: Case,
     sampler: dict[str, Any],
     preflight: dict[str, Any],
@@ -205,6 +205,9 @@ def run_tool_or_agent_case(
 
             kwargs["on_progress"] = on_progress
         try:
+            blocked = chat_request_internal_error(messages)
+            if blocked is not None:
+                return blocked
             return client.chat(
                 messages,
                 tools=case.tools,
@@ -281,6 +284,11 @@ def run_tool_or_agent_case(
                         }
                     )
                 continue
+            break
+        turn_has_unparsed_arguments = any(
+            not call.get("arguments_parsed") for call in normalized
+        )
+        if turn_has_unparsed_arguments:
             break
         chunk: list[dict[str, Any]] = [result.to_message()]
         for call in normalized:

@@ -8,7 +8,14 @@ from bench.spec import Case
 import pytest
 
 from bench.catalog import GET_PLACE
-from bench.client import ChatResult, deadline_abort_code, generation_stall_s
+from bench.client import (
+    BENCH_INTERNAL_ERROR,
+    ChatResult,
+    _build_request_body,
+    chat_request_internal_error,
+    deadline_abort_code,
+    generation_stall_s,
+)
 from bench.hard_score import (
     DIMENSIONS,
     SUITE_WEIGHTS,
@@ -882,6 +889,30 @@ class TestInfraAndAggregation:
         assert score["hard_pass"] is False
         assert score["violations"] == ["INFRA_ERROR"]
 
+    def test_t01_en_bench_internal_error(self) -> None:
+        case = _case("T01_en")
+        score = _tools_score(
+            case,
+            chat_infra(BENCH_INTERNAL_ERROR, "unparsed tool arguments on the outbound chat request"),
+        )
+        assert score["hard_pass"] is False
+        assert score["violations"] == [BENCH_INTERNAL_ERROR]
+        assert "INFRA_ERROR" not in score["violations"]
+
+    def test_aggregate_bench_internal_error_excluded_from_rate(self) -> None:
+        trials = [
+            {"score": {"hard_pass": True, "violations": []}, "mode_key": "ok"},
+            {
+                "score": {"hard_pass": False, "violations": [BENCH_INTERNAL_ERROR]},
+                "mode_key": "bench",
+            },
+        ]
+        agg = aggregate_trials(trials)
+        assert agg["n_trials"] == 2
+        assert agg["n_infra"] == 1
+        assert agg["n_counted"] == 1
+        assert agg["hard_pass_rate"] == 1.0
+
     def test_t01_en_case_generation_timeout(self) -> None:
         case = _case("T01_en")
         score = _tools_score(case, chat_infra("CASE_GENERATION_TIMEOUT", "request_timeout_s exceeded"))
@@ -1172,6 +1203,7 @@ class TestHarnessDoesNotTurnMalformedCallsIntoInfra:
         violations = result["score"]["violations"]
         assert "BAD_JSON_TYPE" in violations
         assert "INFRA_ERROR" not in violations
+        assert BENCH_INTERNAL_ERROR not in violations
         assert result["score"]["hard_pass"] is False
 
     def test_t18_unparsed_args_not_executed(self) -> None:
@@ -1189,6 +1221,182 @@ class TestHarnessDoesNotTurnMalformedCallsIntoInfra:
                 for call in message.get("tool_calls") or []:
                     raw = (call.get("function") or {}).get("arguments")
                     assert raw != "{"
+
+    def test_mixed_turn_unparsed_args_execute_none(self) -> None:
+        case = apply_prompt_variant(_case("T18_en"), "")
+        mixed = chat_ok(
+            tool_calls=[
+                openai_tool_call("search", {"query": "London"}, "s1"),
+                openai_tool_call("get_place_details", "{", "p1"),
+            ],
+            finish_reason="tool_calls",
+        )
+        client = ScriptedClient(
+            [
+                mixed,
+                chat_infra(
+                    "INFRA_ERROR",
+                    "HTTP 500: Failed to parse tool call arguments as JSON: unexpected end of input",
+                ),
+            ]
+        )
+        result = run_tool_or_agent_case(
+            client=client,
+            case=case,
+            sampler=dict(self._SAMPLER),
+            preflight={},
+            prompt_variant="neutral",
+            repeat=0,
+        )
+        step = result["steps"][0]
+        search_payload = execute_mock("search", {"query": "London"})
+        details_payload = execute_mock("get_place_details", {})
+        assert step["tool_payloads"] == []
+        assert search_payload not in step["tool_payloads"]
+        assert details_payload not in step["tool_payloads"]
+        assert step["normalized"][0]["arguments_parsed"] is True
+        assert step["normalized"][1]["arguments_parsed"] is False
+        assert len(client.calls) == 1
+        violations = result["score"]["violations"]
+        assert "BAD_JSON_TYPE" in violations
+        assert "INFRA_ERROR" not in violations
+        assert BENCH_INTERNAL_ERROR not in violations
+        assert result["score"]["hard_pass"] is False
+
+
+UNPARSED_TOOL_ARGUMENT_BLOBS = (
+    "",
+    " ",
+    None,
+    "[]",
+    "21",
+    "true",
+    '"London"',
+    "{",
+    '{"city":',
+    '{"',
+)
+
+
+def _chat_request_body(messages: list[dict[str, Any]]) -> dict[str, Any]:
+    return _build_request_body(
+        model="test-model",
+        messages=messages,
+        tools=None,
+        tool_choice=None,
+        parallel_tool_calls=None,
+        temperature=0,
+        top_p=1,
+        top_k=0,
+        min_p=0,
+        repeat_penalty=1,
+        seed=1,
+        chat_template_kwargs=None,
+        max_tokens=None,
+        stream=False,
+    )
+
+
+def _outbound_tool_argument_raws(messages: list[dict[str, Any]]) -> list[Any]:
+    raws: list[Any] = []
+    for message in messages:
+        for call in message.get("tool_calls") or []:
+            raws.append((call.get("function") or {}).get("arguments"))
+    return raws
+
+
+class TestChatRequestUnparsedArgumentsAreBenchInternalError:
+    def _history_with_unparsed(self, raw: Any, *, with_parsed_sibling: bool) -> list[dict[str, Any]]:
+        broken = openai_tool_call("get_place_details", raw if isinstance(raw, (dict, str)) else "", "p1")
+        broken["function"]["arguments"] = raw
+        calls = [broken]
+        if with_parsed_sibling:
+            calls = [openai_tool_call("search", {"query": "London"}, "s1"), broken]
+        return [
+            {"role": "user", "content": "Find London."},
+            {"role": "assistant", "content": "", "tool_calls": calls},
+        ]
+
+    @pytest.mark.parametrize("raw", UNPARSED_TOOL_ARGUMENT_BLOBS)
+    def test_unparsed_arguments_block_the_chat_request(self, raw: Any) -> None:
+        args, ok = parse_arguments(raw)
+        assert ok is False
+        assert args is None
+        original = self._history_with_unparsed(raw, with_parsed_sibling=False)
+        snapshot = deepcopy(original)
+        blocked = chat_request_internal_error(original)
+        body = _chat_request_body(original)
+        assert original == snapshot
+        assert blocked is not None
+        assert blocked.ok is False
+        assert blocked.infra_code == BENCH_INTERNAL_ERROR
+        assert body["messages"] == original
+        assert raw in _outbound_tool_argument_raws(body["messages"])
+
+    @pytest.mark.parametrize("raw", UNPARSED_TOOL_ARGUMENT_BLOBS)
+    def test_parsed_sibling_does_not_rewrite_unparsed_history(self, raw: Any) -> None:
+        original = self._history_with_unparsed(raw, with_parsed_sibling=True)
+        snapshot = deepcopy(original)
+        blocked = chat_request_internal_error(original)
+        body = _chat_request_body(original)
+        assert original == snapshot
+        assert blocked is not None
+        assert blocked.infra_code == BENCH_INTERNAL_ERROR
+        assert body["messages"] == original
+        assert raw in _outbound_tool_argument_raws(body["messages"])
+        search = openai_tool_call("search", {"query": "London"}, "s1")
+        assert search["function"]["arguments"] in _outbound_tool_argument_raws(body["messages"])
+
+    def test_json_object_arguments_are_safe_to_send(self) -> None:
+        as_string = openai_tool_call("search", {"query": "London"}, "s1")
+        as_dict = {
+            "id": "s2",
+            "type": "function",
+            "function": {"name": "search", "arguments": {"query": "Wrocław"}},
+        }
+        original = [
+            {"role": "user", "content": "search"},
+            {"role": "assistant", "content": "", "tool_calls": [as_string, as_dict]},
+        ]
+        assert chat_request_internal_error(original) is None
+        body = _chat_request_body(original)
+        assert body["messages"] == original
+        raws = _outbound_tool_argument_raws(body["messages"])
+        assert raws == ['{"query": "London"}', {"query": "Wrocław"}]
+        for arguments in raws:
+            _parsed, ok = parse_arguments(arguments)
+            assert ok is True
+
+    def test_seeded_unparsed_history_is_bench_internal_error(self) -> None:
+        case = apply_prompt_variant(_case("T18_en"), "")
+        broken = openai_tool_call("get_place_details", "{", "p1")
+        case.messages.append(
+            {"role": "assistant", "content": "", "tool_calls": [broken]}
+        )
+        client = ScriptedClient(
+            [chat_ok(content="must not be sent after unparsed history")]
+        )
+        result = run_tool_or_agent_case(
+            client=client,
+            case=case,
+            sampler={
+                "temperature": 0,
+                "top_p": 1,
+                "top_k": 0,
+                "min_p": 0,
+                "repeat_penalty": 1,
+                "seed": 1,
+                "chat_template_kwargs": {},
+            },
+            preflight={},
+            prompt_variant="neutral",
+            repeat=0,
+        )
+        assert client.calls == []
+        assert BENCH_INTERNAL_ERROR in result["score"]["violations"]
+        assert "INFRA_ERROR" not in result["score"]["violations"]
+        assert result["score"]["hard_pass"] is False
+        assert "{" in _outbound_tool_argument_raws(result["messages"])
 
 
 class TestDimensionCoverage:

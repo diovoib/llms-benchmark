@@ -54,6 +54,8 @@
                     "CONTEXT_OVERFLOW",
                     "INFRA_ERROR",
                     "TIMEOUT",
+                    "CASE_GENERATION_TIMEOUT",
+                    "BENCH_INTERNAL_ERROR",
                     "JUDGE_UNSTABLE",
                     "RUBBER_STAMP_REVIEW",
                     "ITERATION_PROTOCOL_BREAK",
