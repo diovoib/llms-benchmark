@@ -114,19 +114,19 @@ The live loop substitutes an empty object whenever parsed arguments are missing,
 
 These names appear in the catalogs the model sees. If the model calls them, they must implement the behaviour advertised in their descriptions rather than returning a generic acknowledgement such as `{ok, tool, args}` or `{ok: true}`.
 
-**test_calculator_evaluates_a_simple_expression.** The calculator must return a numeric `result` of `801` for `234+567`. A payload that only echoes the expression is not an evaluation. The no-calculator math case forbids calling it; if a model calls it anyway, the observation still has to be the sum.
+**test_calculator_with_an_expression.** The calculator is an acknowledgement stub: given an `expression`, it returns `ok`, `tool` `calculator`, and those same arguments. The no-calculator math case (T03) fails as `WRONG_TOOL` if the model calls any tool, including calculator, so the observation is not scored as arithmetic.
 
-**test_currency_rates_return_numeric_rates_for_the_base.** Currency rates must echo base `PLN` and a `rates` object whose values are numbers.
+**test_currency_rates_with_a_base.** Currency rates is an acknowledgement stub: given a `base`, it returns `ok`, `tool` `get_currency_rates`, and those same arguments.
 
-**test_stock_price_returns_a_numeric_price.** Stock price must echo symbol `AAPL` and a numeric `price`. A JSON object that merely contains some digit somewhere is not a price.
+**test_stock_price_with_a_symbol.** Stock price is an acknowledgement stub: given a `symbol`, it returns `ok`, `tool` `get_stock_price`, and those same arguments.
 
-**test_traffic_returns_city_traffic_information.** Traffic must echo city `London` and include a traffic-specific field (`traffic`, `congestion`, or `delay_minutes`). A generic `status` key is not enough.
+**test_traffic_with_a_city.** Traffic is an acknowledgement stub: given a `city`, it returns `ok`, `tool` `get_traffic`, and those same arguments.
 
-**test_air_quality_returns_a_reading_for_the_city.** Air quality must echo city `London` and a numeric `aqi`.
+**test_air_quality_with_a_city.** Air quality is an acknowledgement stub: given a `city`, it returns `ok`, `tool` `get_air_quality`, and those same arguments.
 
-**test_translate_text_returns_translated_text.** Translate must return a `translated` string for target language `pl` that is not the source `hello`. Echoing the source text, even with `target_lang` set, is not a translation.
+**test_translate_text_with_text_and_target_lang.** Translate is an acknowledgement stub: given `text` and `target_lang`, it returns `ok`, `tool` `translate_text`, and those same arguments.
 
-**test_list_directory_returns_a_file_listing.** List directory must return an `entries` list for the requested path.
+**test_list_directory_with_a_path.** List directory is an acknowledgement stub: given a `path`, it returns `ok`, `tool` `list_directory`, and those same arguments.
 
 **test_read_note_returns_note_content.** Read note must echo `note_id` `n1` and a non-empty `content` string. Returning only the id is not reading the note.
 

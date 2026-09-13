@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from bench.hard_score import parse_arguments
+
 # Distinctive values so observation-use is a substring check, not a judge call.
 # Weather unit lives only in the payload field `unit` (not in the catalog or key name).
 # Wrocław and other cities → 14.3 °C; New York → 57.4 °F. Repeat index does not change this.
@@ -71,6 +73,16 @@ def place_required_substrings(place_id: str) -> list[str]:
     return list(PLACE_NEEDLES[place_id])
 
 
+def _is_file_path(path: Any) -> bool:
+    if not isinstance(path, str):
+        return False
+    text = path.strip()
+    if not text or text.endswith(("/", "\\")):
+        return False
+    name = text.replace("\\", "/").rsplit("/", 1)[-1]
+    return bool(name) and name not in {".", ".."}
+
+
 def _place_hit(query: str) -> tuple[str, str] | None:
     text = str(query).casefold()
     has_london = "london" in text
@@ -87,8 +99,10 @@ def _dump(obj: Any) -> str:
 
 
 def execute_mock(name: str, arguments: dict[str, Any] | Any, extra: dict[str, Any] | None = None) -> str:
-    args = arguments if isinstance(arguments, dict) else {}
+    args, parsed = parse_arguments(arguments)
     extra = extra or {}
+    if not parsed or args is None:
+        return _dump({"error": "UNPARSED_ARGUMENTS"})
     if name == "get_current_weather":
         city = str(args.get("city", ""))
         if city in set(extra.get("error_cities") or []):
@@ -115,6 +129,9 @@ def execute_mock(name: str, arguments: dict[str, Any] | Any, extra: dict[str, An
     if name == "lookup_user":
         return _dump({"user_id": args.get("user_id"), "status": "active"})
     if name == "delete_file":
+        path = args.get("path")
+        if not _is_file_path(path):
+            return _dump({"error": "NOT_A_FILE", "got": path})
         return TOKEN_DELETE
     if name == "send_mail":
         return TOKEN_MAIL

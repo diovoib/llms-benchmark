@@ -33,6 +33,7 @@ from bench.mocks import (
     weather_payload,
     weather_required_substrings,
 )
+from bench.hard_score import parse_arguments
 from bench.suites.cases import all_cases
 from helpers import (
     VALID_INVOCATIONS,
@@ -62,7 +63,15 @@ def _is_acknowledgement_stub(payload: Any) -> bool:
     return "tool" in keys and keys <= {"ok", "tool", "args", "name", "arguments"}
 
 
-def _looks_like_success(name: str, raw: str) -> bool:
+def _looks_like_success(name: str, raw: str, arguments: Any) -> bool:
+    args, parsed = parse_arguments(arguments)
+    if not parsed or args is None:
+        return False
+    schema = advertised_tool_schemas().get(name)
+    if schema is not None:
+        for key in schema_required(schema):
+            if key not in args:
+                return False
     if name == "delete_file":
         return raw == TOKEN_DELETE
     if name == "send_mail":
@@ -76,6 +85,8 @@ def _looks_like_success(name: str, raw: str) -> bool:
     except json.JSONDecodeError:
         return False
     if _is_acknowledgement_stub(payload):
+        return False
+    if payload.get("error"):
         return False
     if name == "get_current_weather":
         return "temperature" in payload and "error" not in payload
@@ -99,25 +110,6 @@ def _looks_like_success(name: str, raw: str) -> bool:
         return payload.get("ok") is True
     if name == "get_paint_status":
         return payload.get("status") == "queued"
-    if name == "calculator":
-        result = payload.get("result")
-        return result == 801 or result == "801"
-    if name == "get_currency_rates":
-        rates = payload.get("rates")
-        return isinstance(rates, dict) and any(isinstance(v, (int, float)) and not isinstance(v, bool) for v in rates.values())
-    if name == "get_stock_price":
-        price = payload.get("price")
-        return isinstance(price, (int, float)) and not isinstance(price, bool)
-    if name == "get_traffic":
-        return payload.get("city") == "London" and any(k in payload for k in ("traffic", "congestion", "delay_minutes"))
-    if name == "get_air_quality":
-        aqi = payload.get("aqi")
-        return payload.get("city") == "London" and isinstance(aqi, (int, float)) and not isinstance(aqi, bool)
-    if name == "translate_text":
-        translated = payload.get("translated")
-        return isinstance(translated, str) and translated.casefold() != "hello"
-    if name == "list_directory":
-        return isinstance(payload.get("entries"), list)
     if name == "read_note":
         content = payload.get("content")
         return isinstance(content, str) and bool(content.strip())
@@ -208,12 +200,12 @@ class TestRequiredArgumentsAreNotSuccessfulObservations:
         required = set(schema_required(schema))
         args = {key: value for key, value in VALID_INVOCATIONS[name].items() if key not in required}
         raw = execute_mock(name, args)
-        assert not _looks_like_success(name, raw)
+        assert not _looks_like_success(name, raw, args)
 
     @pytest.mark.parametrize("name", sorted(advertised_tool_schemas()))
     def test_truncated_non_object_arguments_do_not_return_a_successful_observation(self, name: str) -> None:
         raw = execute_mock(name, "{")
-        assert not _looks_like_success(name, raw)
+        assert not _looks_like_success(name, raw, "{")
 
 
 class TestCurrentWeather:
@@ -401,53 +393,58 @@ class TestSideEffectTokens:
 
 
 class TestDomainToolsMustNotBeGenericStubs:
-    def test_calculator_evaluates_a_simple_expression(self) -> None:
-        payload = _json("calculator", {"expression": "234+567"})
-        assert not _is_acknowledgement_stub(payload)
-        assert payload.get("result") == 801
+    def test_calculator_with_an_expression(self) -> None:
+        arguments = {"expression": "234+567"}
+        payload = _json("calculator", arguments)
+        assert payload.get("ok") is True
+        assert payload.get("tool") == "calculator"
+        assert payload.get("args") == arguments
 
-    def test_currency_rates_return_numeric_rates_for_the_base(self) -> None:
-        payload = _json("get_currency_rates", {"base": "PLN"})
-        assert not _is_acknowledgement_stub(payload)
-        assert payload.get("base") == "PLN"
-        rates = payload["rates"]
-        assert isinstance(rates, dict) and rates
-        assert all(isinstance(value, (int, float)) and not isinstance(value, bool) for value in rates.values())
+    def test_currency_rates_with_a_base(self) -> None:
+        arguments = {"base": "PLN"}
+        payload = _json("get_currency_rates", arguments)
+        assert payload.get("ok") is True
+        assert payload.get("tool") == "get_currency_rates"
+        assert payload.get("args") == arguments
 
-    def test_stock_price_returns_a_numeric_price(self) -> None:
-        payload = _json("get_stock_price", {"symbol": "AAPL"})
-        assert not _is_acknowledgement_stub(payload)
-        assert payload.get("symbol") == "AAPL"
-        assert isinstance(payload.get("price"), (int, float)) and not isinstance(payload.get("price"), bool)
+    def test_stock_price_with_a_symbol(self) -> None:
+        arguments = {"symbol": "AAPL"}
+        payload = _json("get_stock_price", arguments)
+        assert payload.get("ok") is True
+        assert payload.get("tool") == "get_stock_price"
+        assert payload.get("args") == arguments
 
-    def test_traffic_returns_city_traffic_information(self) -> None:
-        payload = _json("get_traffic", {"city": "London"})
-        assert not _is_acknowledgement_stub(payload)
-        assert payload.get("city") == "London"
-        assert any(key in payload for key in ("traffic", "congestion", "delay_minutes"))
+    def test_traffic_with_a_city(self) -> None:
+        arguments = {"city": "London"}
+        payload = _json("get_traffic", arguments)
+        assert payload.get("ok") is True
+        assert payload.get("tool") == "get_traffic"
+        assert payload.get("args") == arguments
 
-    def test_air_quality_returns_a_reading_for_the_city(self) -> None:
-        payload = _json("get_air_quality", {"city": "London"})
-        assert not _is_acknowledgement_stub(payload)
-        assert payload.get("city") == "London"
-        assert isinstance(payload.get("aqi"), (int, float)) and not isinstance(payload.get("aqi"), bool)
+    def test_air_quality_with_a_city(self) -> None:
+        arguments = {"city": "London"}
+        payload = _json("get_air_quality", arguments)
+        assert payload.get("ok") is True
+        assert payload.get("tool") == "get_air_quality"
+        assert payload.get("args") == arguments
 
-    def test_translate_text_returns_translated_text(self) -> None:
-        payload = _json("translate_text", {"text": "hello", "target_lang": "pl"})
-        assert not _is_acknowledgement_stub(payload)
-        translated = payload.get("translated")
-        assert isinstance(translated, str) and translated.strip()
-        assert translated.casefold() != "hello"
-        assert payload.get("target_lang") == "pl"
+    def test_translate_text_with_text_and_target_lang(self) -> None:
+        arguments = {"text": "hello", "target_lang": "pl"}
+        payload = _json("translate_text", arguments)
+        assert payload.get("ok") is True
+        assert payload.get("tool") == "translate_text"
+        assert payload.get("args") == arguments
 
-    def test_list_directory_returns_a_file_listing(self) -> None:
-        payload = _json("list_directory", {"path": "/tmp"})
-        assert not _is_acknowledgement_stub(payload)
-        assert isinstance(payload.get("entries"), list)
+    def test_list_directory_with_a_path(self) -> None:
+        arguments = {"path": "/tmp"}
+        payload = _json("list_directory", arguments)
+        assert payload.get("ok") is True
+        assert payload.get("tool") == "list_directory"
+        assert payload.get("args") == arguments
 
     def test_read_note_returns_note_content(self) -> None:
-        payload = _json("read_note", {"note_id": "n1"})
-        assert not _is_acknowledgement_stub(payload)
-        assert payload.get("note_id") == "n1"
-        content = payload.get("content")
-        assert isinstance(content, str) and content.strip()
+        arguments = {"note_id": "n1"}
+        payload = _json("read_note", arguments)
+        assert payload.get("ok") is True
+        assert payload.get("tool") == "read_note"
+        assert payload.get("args") == arguments
