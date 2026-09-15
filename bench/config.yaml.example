@@ -1,13 +1,21 @@
-base_url: http://127.0.0.1:8080/v1
-# --api-key and --ctx-size are read from this launcher. Do not put the key in this file.
 launcher: ../llama.bat
+# launcher: ../ollama.bat
+# --api-key and --ctx-size are read from the launchers.
+
+# llama:
+base_url: http://127.0.0.1:8080/v1
+# ollama:
+# base_url: http://127.0.0.1:11434/v1
+
 connect_timeout_s: 2
 log_flush_bytes: 256
 max_coding_rounds: 7
-# Headline numbers are `neutral` (no system message).
-# instructed = SYS_INSTRUCTED. Optional: helpful = SYS_NEUTRAL, harness = harness_system.
+
+# Prompts for variants can be found
+# - instructed = SYS_INSTRUCTED in src/bench/ . Optional: helpful = SYS_NEUTRAL, harness = harness_system.
 prompt_variants: [neutral, helpful, instructed]
 harness_system: ""
+
 optional_temp_sweep:
   enabled: false
   suite: tools

@@ -1,0 +1,5 @@
+set OLLAMA_MODELS=<path_to_models_dir>
+set OLLAMA_HOST=127.0.0.1:11434
+set OLLAMA_CONTEXT_LENGTH=16384
+set OLLAMA_API_KEY=<api_key_for_ollama>
+ollama serve

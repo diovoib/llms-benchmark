@@ -4,8 +4,9 @@ import os
 import re
 import sys
 from copy import deepcopy
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 import yaml
 
@@ -28,13 +29,30 @@ _API_KEY_RE = re.compile(
     r"""--api-key(?:\s+|=)(?:"([^"]*)"|'([^']*)'|(\S+))""",
     re.IGNORECASE,
 )
-_CTX_SIZE_RE = re.compile(
-    r"""(?:--ctx-size|--ctx_size)(?:\s+|=)(\d+)""",
+_LLAMA_CTX_SIZE_RE = re.compile(
+    r"""--ctx-size(?:\s+|=)(\d+)""",
     re.IGNORECASE,
 )
-_CTX_SHORT_RE = re.compile(
-    r"""(?:^|\s)-c(?:\s+|=)(\d+)""",
+_LLAMA_API_KEY_RE = re.compile(
+    r"""--api-key(?:\s+|=)(?:"([^"]*)"|'([^']*)'|(\S+))""",
+    re.IGNORECASE,
 )
+_OLLAMA_CTX_SIZE_RE = re.compile(
+    r"""(?:^|\s)(?:export|set)\s+OLLAMA_CONTEXT_LENGTH\s*=\s*(\d+)""",
+    re.IGNORECASE | re.MULTILINE,
+)
+_OLLAMA_API_KEY_RE = re.compile(
+    r"""(?:^|\s)(?:export|set)\s+OLLAMA_API_KEY\s*=\s*(?:"([^"]*)"|'([^']*)'|(\S+))""",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class LauncherSettings:
+    path: Path
+    kind: Literal["llama", "ollama"]
+    ctx_size: int
+    api_key: str | None = None
 
 
 def _read_text(path: Path) -> str:
@@ -44,6 +62,10 @@ def _read_text(path: Path) -> str:
     if len(raw) >= 2 and raw[1] == 0 and raw[0] != 0:
         return raw.decode("utf-16-le")
     return raw.decode("utf-8", errors="replace")
+
+
+def _regex_captured(match: re.Match[str]) -> str:
+    return next(g for g in match.groups() if g is not None)
 
 
 def _require_number(data: dict[str, Any], dotted: str) -> float:
@@ -65,34 +87,48 @@ def launcher_kind(path: Path) -> str:
     return name.lower()
 
 
-def parse_llama_launcher(path: Path) -> dict[str, Any]:
+def parse_llama_launcher(path: Path) -> LauncherSettings:
     text = _read_text(path)
-    out: dict[str, Any] = {"kind": "llama", "path": str(path)}
-    key = _API_KEY_RE.search(text)
-    if key:
-        out["api_key"] = next(g for g in key.groups() if g is not None)
-    ctx = _CTX_SIZE_RE.search(text)
-    if ctx:
-        out["ctx_size"] = int(ctx.group(1))
-    else:
-        short = _CTX_SHORT_RE.search(text)
-        if short:
-            out["ctx_size"] = int(short.group(1))
-        else:
-            out["ctx_size"] = DEFAULT_CTX_SIZE
-    return out
+    ctx_size = DEFAULT_CTX_SIZE
+    if match := _LLAMA_CTX_SIZE_RE.search(text):
+        ctx_size = int(match.group(1))
+    api_key = None
+    if match := _LLAMA_API_KEY_RE.search(text):
+        api_key = _regex_captured(match)
+    return LauncherSettings(
+        path=path.resolve(),
+        kind="llama",
+        ctx_size=ctx_size,
+        api_key=api_key,
+    )
 
 
-def _not_implemented(kind: str) -> Callable[[Path], dict[str, Any]]:
-    def parse(path: Path) -> dict[str, Any]:
+def parse_ollama_launcher(path: Path) -> LauncherSettings:
+    text = _read_text(path)
+    ctx_size = DEFAULT_CTX_SIZE
+    if match := _OLLAMA_CTX_SIZE_RE.search(text):
+        ctx_size = int(match.group(1))
+    api_key = None
+    if match := _OLLAMA_API_KEY_RE.search(text):
+        api_key = _regex_captured(match)
+    return LauncherSettings(
+        path=path.resolve(),
+        kind="ollama",
+        ctx_size=ctx_size,
+        api_key=api_key,
+    )
+
+
+def _not_implemented(kind: str) -> Callable[[Path], LauncherSettings]:
+    def parse(path: Path) -> LauncherSettings:
         raise NotImplementedError(f"launcher kind {kind!r} ({path}) is not implemented")
 
     return parse
 
 
-LAUNCHER_PARSERS: dict[str, Callable[[Path], dict[str, Any]]] = {
+LAUNCHER_PARSERS: dict[str, Callable[[Path], LauncherSettings]] = {
     "llama": parse_llama_launcher,
-    "ollama": _not_implemented("ollama"),
+    "ollama": parse_ollama_launcher,
     "vllm": _not_implemented("vllm"),
     "lmstudio": _not_implemented("lmstudio"),
 }
@@ -145,19 +181,14 @@ def resolve_launcher(config_path: Path, data: dict[str, Any]) -> Path:
     raise ValueError(f"launcher file not found (config launcher={raw!r}); tried {tried}")
 
 
-def parse_launcher(path: Path) -> dict[str, Any]:
+def parse_launcher(path: Path) -> LauncherSettings:
     kind = launcher_kind(path)
     parser = LAUNCHER_PARSERS.get(kind)
     if parser is None:
         raise NotImplementedError(
             f"unknown launcher kind {kind!r} ({path}); register a parser"
         )
-    parsed = parser(path)
-    parsed["kind"] = kind
-    parsed["path"] = str(path)
-    if "ctx_size" not in parsed:
-        parsed["ctx_size"] = DEFAULT_CTX_SIZE
-    return parsed
+    return parser(path)
 
 
 def load_config(path: str | Path) -> dict[str, Any]:
@@ -189,16 +220,16 @@ def load_config(path: str | Path) -> dict[str, Any]:
 
     launcher = resolve_launcher(config_path, data)
     parsed = parse_launcher(launcher)
-    data["_launcher"] = str(launcher)
-    data["_launcher_kind"] = parsed.get("kind")
-    data["ctx_size"] = int(parsed.get("ctx_size") or DEFAULT_CTX_SIZE)
+    data["_launcher"] = str(parsed.path)
+    data["_launcher_kind"] = parsed.kind
+    data["ctx_size"] = parsed.ctx_size
 
     data.pop("api_key", None)
     env_key = os.environ.get("BENCH_API_KEY")
     if env_key:
         data["api_key"] = env_key
     else:
-        data["api_key"] = parsed.get("api_key") or ""
+        data["api_key"] = parsed.api_key or ""
     return data
 
 
@@ -222,5 +253,8 @@ def resolve_temperature(profile: dict[str, Any], model: dict[str, Any]) -> float
     return float(temp)
 
 
+_MODEL_DIR_UNSAFE = str.maketrans({ch: "_" for ch in '\\/:*?"<>|'})
+
+
 def model_dir_name(model: dict[str, Any]) -> str:
-    return str(model["name"]).replace("/", "_").replace("\\", "_")
+    return str(model["name"]).translate(_MODEL_DIR_UNSAFE)

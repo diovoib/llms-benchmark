@@ -1,3 +1,5 @@
-# Local llama-server launcher (paths, --api-key, --ctx-size). Copy from llama.bat.example / llama.sh.example.
+# Local server launchers (paths, LLAMA_* / OLLAMA_* ctx and key). Copy from *.example.
 /llama.bat
 /llama.sh
+/ollama.bat
+/ollama.sh

@@ -13,24 +13,22 @@ The final outcome should be assessed by a judge — a human or a larger LLM — 
 
 ## Requirements
 
+- A running OpenAI-compatible server (llama: `http://127.0.0.1:8080/v1`, ollama: `http://127.0.0.1:11434/v1`, etc)
 - Python 3.10+
-- A running OpenAI-compatible server (default `http://127.0.0.1:8080/v1`)
-- The model chat template **must support tools**.
-- `launcher` in config points at your server launcher (default `../llama.bat` from `bench/`); the bench reads **`--api-key`** (optional) and **`--ctx-size` / `--ctx_size` / `-c`**. No or empty `--api-key` means requests go without `Authorization`. Missing ctx defaults to 16384 (used as C01 `max_tokens`; it does not change the running server). Do not copy the key into yaml. Override: env `BENCH_API_KEY`. `llama.bat` / `llama.sh` are gitignored — copy from [`llama.bat.example`](llama.bat.example) or [`llama.sh.example`](llama.sh.example) and edit locally.
+- Python requirements:
+  - openai>=1.40.0
+  - pyyaml>=6.0
+  - pytest>=8.0
+  - httpx>=0.27.0
+- The model chat template **must support tools**. (For example Phi-4 does not support them correctly, while phi-4-mini does)
 
-```text
-cd bench
-python -m pip install -r requirements.txt
-```
 
 
 ## Setup
 
-1. Download a server that hosts GGUF (or other) weights and exposes OpenAI-compatible `POST /v1/chat/completions`. This repo currently uses llama.cpp `llama-server` via a local `llama.bat`. Ollama, LM Studio, and vLLM will also work when `base_url` and the API key match between the running model server and the config file.
+1. Download a server that hosts models (GGUF or other) and exposes OpenAI-compatible `POST /v1/chat/completions`. llama.cpp and ollama are currently supported. LM Studio and vLLM will also work when `base_url` and the API key match between the running model-hosting server and the config file.
 
-2. For llama.cpp copy [`llama.bat.example`](llama.bat.example) to `llama.bat` (or [`llama.sh.example`](llama.sh.example) to `llama.sh`) and edit that copy: fill in the path to where you installed `llama-server`, your models directory `--models-dir`, `--ctx-size`, and `--api-key`. Git ignores `llama.bat` and `llama.sh`, so local paths and keys stay off the remote.
-
-`launcher` in yaml is the only launcher field. Kind is the filename stem in lowercase (`llama.bat` / `llama.sh` → `llama`). Registered kinds: `llama` (parsed), `ollama`, `vllm`, `lmstudio` (not implemented yet — the bench will refuse that kind). Other servers can still be used if you point `launcher` at a `llama.bat`/`llama.sh`-style file (or keep using a llama.cpp launcher) and set `base_url` to match the already running server.
+2.1. For llama.cpp copy `llama.bat.example` to `llama.bat` (or `llama.sh.example` to `llama.sh`) and edit that copy: fill in the path to `llama-server`, the models directory `--models-dir`, `--ctx-size`, `--api-key`. In the yaml config set llama.bat. Download models, e.g. from https://huggingface.co/models, look for a gguf version.
 
 ```text
 copy llama.bat.example llama.bat
@@ -42,15 +40,21 @@ For example:
 "<llama-server.exe>" --models-dir "<weights_dir>" --models-max 1 --ctx-size 16384 --parallel 1 --threads 8 -lv 3 --jinja --api-key "<api_key>"
 ```
 
-3. Python 3.10+. From `bench/`:
+Or for ollama
+
+2.2. For ollama copy `ollama.bat.example` to `ollama.bat` (or `ollama.sh.example` to `ollama.sh`) and edit that copy: fill in the path to the models directory. In yaml set `launcher: ../ollama.bat` (or `../ollama.sh`). Models are pulled separately (`ollama pull …`) and you put their names into the yaml config.
+
+The yaml has a `launcher` field for which kind of server will be started and where to read the API key and context size from.
+
+3. Python 3.10+ and install the Python dependencies. From the `bench/` directory:
 
 ```text
 python -m pip install -r requirements.txt
 ```
 
-4. Start the server (`llama.bat` in this directory) and leave it running. Glance at the early server logs. From there you can take the names the server found and put the ones you want to use into the config file (step 5). Check whether it found them at all, and fix errors if any show up.
+4. While in the `bench/` directory, start the server (`llama.bat`/`ollama.bat`) and leave it running. Glance at the early server logs. From there you can take the model names the server found and put the ones you want to use into the config file (step 5). Check whether it found them at all, and fix errors if any show up.
 
-llama-server also starts a local chat Web UI — you can check that it works by opening `http://127.0.0.1:8080/` in a browser.
+llama-server starts a local chat Web UI — you can check that it works by opening `http://127.0.0.1:8080/` in a browser.
 
 Regardless of which server you use, something like this should work (up to the port — the default port differs between llama, Ollama, and others):
 
@@ -63,19 +67,15 @@ curl -H "Authorization: Bearer <api_key>" http://127.0.0.1:8080/v1/models
 - `models[0].name` — **exact router model name**
 - `models[0].recommended_temperature` — used by profile `real` (`temperature: null` if the model default should be used)
 - `prompt_variants` — which variants to use when they are not given on the bench command line; see below.
-- `harness_system` — only when `harness` is in `prompt_variants`: paste the system prompt that the agent you actually use really sends.
 
 6. From a command line in `bench/`, run:
 
 ```text
 python run.py run
-python run.py run --verbose
 ```
 
-`--verbose` prints each scored HTTP call as `\n\nRequest:\n` plus the raw POST body after send, then `\n\nResponse:\n` plus the full response body after receive. Not used on preflight or `summarize`.
-
 7. After it starts, the bench creates `bench/results/20260906T100000Z` with logs and results from the run.
-While it runs it also prints basic progress, so you can see whether it is working at all, or whether it is already worth stopping and fixing something.
+While it runs it also prints basic progress, so you can see whether it is working at all, or whether it is already worth stopping and fixing the settings.
 
 
 ## Functionality details
@@ -111,12 +111,15 @@ config: `--config config.yaml`
 suite: `--suites tools`
 profile: `--profiles greedy`
 
-Full tests are worth running only after every model listed in the config file has been checked with these settings.
+Full tests are worth running only after every model listed in the config file has been checked with these settings. `--verbose` prints each scored HTTP call to the model server as `\n\nRequest:\n` plus the raw POST body after send, then `\n\nResponse:\n` plus the full response body after receive. Not used on preflight or `summarize`.
+
 A command to copy and then delete list values or flags you do not need, once the basic run works. Details of the options are in the sections below.
 
 ```text
-python run.py run --config my.config.yaml --profiles greedy,real --suites tools,agent,coding --prompt-variants neutral,helpful,instructed,harness --out results
+python run.py run --verbose --config my.config.yaml --profiles greedy,real --suites tools,agent,coding --prompt-variants neutral,helpful,instructed,harness --out results
 ```
+
+- `harness` — use only when the yaml config has the system prompt filled in, the one sent by the agent you actually use (e.g. Hermes).
 
 
 ### Sampler profiles
@@ -277,9 +280,7 @@ results/<timestamp>/
 
 ## Judge
 
-Automatic 0/1 does not finish the evaluation. Give the judge the results folder (it has its own `README.md`, `judge/`, `CASE.md`, transcripts). Do not expect the judge to open this git repo. Mechanical ground truth is the trial files plus the **prompt-variant** `summary.json`; greedy/real, model, and root summaries are means of those child headlines.
-
-The bench catches the obvious things — wrong tool, bad JSON, a template leaking into the chat — but it does not decide whether asking for a missing city was reasonable, or whether the code review was self-adoration. An automatic check cannot do that, which is why the start of this document talks about a judge.
+Automatic 0/1 does not finish the evaluation. Give the judge the results folder (it has its own `README.md`, `judge/`, `CASE.md`, transcripts). Do not expect the judge to open this git repo. Mechanical ground truth is the trial files plus the prompt-variant `summary.json`; greedy/real, model, and root summaries are means of those child headlines.
 
 
 ### Interpretation
@@ -296,6 +297,7 @@ The `greedy` profile (temperature 0) is there to see whether things work at all,
 | Path | Role |
 | --- | --- |
 | [`llama.bat.example`](llama.bat.example) / [`llama.sh.example`](llama.sh.example) | Template for the local llama-server launcher (`--models-dir`, `--ctx-size`, `--jinja` — required for `tools`). Copy to `llama.bat` or `llama.sh` and edit; those files are gitignored. |
+| [`ollama.bat.example`](ollama.bat.example) / [`ollama.sh.example`](ollama.sh.example) | Template for the local `ollama serve` launcher (`OLLAMA_HOST`, `OLLAMA_CONTEXT_LENGTH`, `OLLAMA_API_KEY`). Copy to `ollama.bat` or `ollama.sh` and edit; those files are gitignored. |
 | [`bench/`](bench/) | The whole benchmark: CLI, cases, mocks, judge (files, no API call). |
 | [`bench/config.yaml.example`](bench/config.yaml.example) | Endpoint, models, sampler profiles, suites and repeat counts. To be copied to `config.yaml` |
 | [`bench/src/bench/`](bench/src/bench/) | Code: client, preflight, runner, hard 0/1, coding loop. |

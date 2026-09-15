@@ -13,24 +13,22 @@ Efekt finalny powinien być oceniony przez sędziego, człowieka albo większy L
 
 ## Wymagania
 
+- Działający serwer OpenAI-compatible (llama: `http://127.0.0.1:8080/v1`, ollama: `http://127.0.0.1:11434/v1`, etc)
 - Python 3.10+
-- Działający serwer OpenAI-compatible (domyślnie `http://127.0.0.1:8080/v1`)
-- Szablon czatu modelu **musi obsługiwać narzędzia**.
-- `launcher` w configu to launcher serwera (domyślnie `../llama.bat` z katalogu `bench/`); bench czyta z niego **`--api-key`** (opcjonalne) oraz **`--ctx-size` / `--ctx_size` / `-c`**. Brak lub pusty `--api-key` oznacza, że requesty będą bez `Authorization`. Brak ctx = 16384 (to jest `max_tokens` dla C01; nie zmienia działającego serwera). Nie wklejaj klucza do yaml. Nadpisanie: env `BENCH_API_KEY`. `llama.bat` / `llama.sh` są w `.gitignore` — skopiuj z [`llama.bat.example`](llama.bat.example) albo [`llama.sh.example`](llama.sh.example) i edytuj lokalnie.
+- Python requirements:
+  - openai>=1.40.0
+  - pyyaml>=6.0
+  - pytest>=8.0
+  - httpx>=0.27.0
+- Szablon czatu modelu **musi obsługiwać narzędzia**. (Np. Phi-4 nie obsługuje ich w poprawny sposób a phi-4-mini już tak)
 
-```text
-cd bench
-python -m pip install -r requirements.txt
-```
 
 
 ## Setup
 
-1. Ściągnij serwer, który hostuje wagi GGUF (albo inne) i wystawia OpenAI-compatible `POST /v1/chat/completions`. Aktualnie używany jest tu llama.cpp `llama-server` przez lokalny `llama.bat`. Ale Ollama, LM Studio i vLLM również będą działać, gdy `base_url` i klucz API się zgadzają między uruchomionym serwerem hostującym modele i plikiem konfiguracyjnym.
+1. Ściągnij serwer, który hostuje modele (GGUF albo inne) i wystawia OpenAI-compatible `POST /v1/chat/completions`. Aktualnie wspierane są llama.cpp i ollama. Ale LM Studio i vLLM również będą działać, gdy `base_url` i klucz API się zgadzają między uruchomionym serwerem hostującym modele i plikiem konfiguracyjnym.
 
-2. Dla llama.cpp skopiuj [`llama.bat.example`](llama.bat.example) do `llama.bat` (albo [`llama.sh.example`](llama.sh.example) do `llama.sh`) i wyedytuj tę kopię: uzupełnij ścieżkę do `llama-server`, katalog modeli `--models-dir`, `--ctx-size`, `--api-key`. Git ignoruje `llama.bat` i `llama.sh`, więc lokalne ścieżki i klucz nie idą na remote.
-
-W yaml jest tylko pole `launcher`. Rodzaj to stem nazwy pliku małymi literami (`llama.bat` / `llama.sh` → `llama`). Zarejestrowane rodzaje: `llama` (parsowany), `ollama`, `vllm`, `lmstudio` (jeszcze niezaimplementowane — bench odmówi). Inny serwer może działać, gdy `launcher` wskazuje plik w stylu llama, a `base_url` zgadza się z już uruchomionym serwerem.
+2.1. Dla llama.cpp skopiuj `llama.bat.example` do `llama.bat` (albo `llama.sh.example` do `llama.sh`) i wyedytuj tę kopię: uzupełnij ścieżkę do `llama-server`, katalog modeli `--models-dir`, `--ctx-size`, `--api-key`. W configu yaml ustaw llama.bat. Ściągnij modele, np z https://huggingface.co/models, szukaj wersji gguf.
 
 ```text
 copy llama.bat.example llama.bat
@@ -42,13 +40,19 @@ Na przykład:
 "<llama-server.exe>" --models-dir "<katalog_wag>" --models-max 1 --ctx-size 16384 --parallel 1 --threads 8 -lv 3 --jinja --api-key "<api_key>"
 ```
 
-3. Python 3.10+. Z katalogu `bench/`:
+Lub dla ollama
+
+2.2. Dla ollama skopiuj `ollama.bat.example` do `ollama.bat` (albo `ollama.sh.example` do `ollama.sh`) i wyedytuj tę kopię: uzupełnij ścieżkę do katalogu modeli. W yaml ustaw `launcher: ../ollama.bat` (albo `../ollama.sh`). Modele ściąga się osobno (`ollama pull …`) i wpisujesz ich nazwy do configu yaml.
+
+W yaml jest pole `launcher` od ustawienia, który rodzaj serwera będzie uruchamiany oraz skąd czytać klucz API i context size.
+
+3. Python 3.10+ oraz zainstaluj zależności dla pythona. Z katalogu `bench/`:
 
 ```text
 python -m pip install -r requirements.txt
 ```
 
-4. Uruchom serwer (`llama.bat` w tym katalogu) i zostaw go włączonego. Zerknij na początkowe logi serwera. Stąd możesz wziąć nazwy, które serwer znalazł i wpisać te, których chcesz użyć, do pliku konfiguracyjnego (pkt 5). Zobaczyć czy w ogóle je znalazł, poprawić błedy jeśli jakieś są.
+4. Bedąc w katalogu `bench/` Uruchom serwer (`llama.bat`/`ollama.bat`) i zostaw go włączonego. Zerknij na początkowe logi serwera. Stąd możesz wziąć nazwy modeli, które serwer znalazł i wpisać te, których chcesz użyć, do pliku konfiguracyjnego (pkt 5). Zobacz czy w ogóle je znalazł, popraw błedy jeśli jakieś są.
 
 llama-serwer uruchamia lokalnie Web UI z chatem - możesz sprawdzić czy działa otwierając w przeglądarce: `http://127.0.0.1:8080/`.
 
@@ -63,19 +67,15 @@ curl -H "Authorization: Bearer <api_key>" http://127.0.0.1:8080/v1/models
 - `models[0].name` — **dokładna nazwa modelu z routera**
 - `models[0].recommended_temperature` — używana przez profil `real` (`temperature: null`, jeśli ma być domyślna modelu)
 - `prompt_variants` — jakich profili użyć gdy nie podane w opcjach startowych bencha, patrz niżej.
-- `harness_system` — tylko gdy w `prompt_variants` jest `harness`: wklej system prompt, który naprawdę wysyła agent, którego używasz.
 
 6. Po wejściu w command line do katalogu `bench/` uruchom poniższą komendę:
 
 ```text
 python run.py run
-python run.py run --verbose
 ```
 
-`--verbose` wypisuje każde oceniane wywołanie HTTP jako `\n\nRequest:\n` plus surowe ciało POST po wysłaniu, potem `\n\nResponse:\n` plus pełne ciało odpowiedzi po odbiorze. Nie dotyczy preflight ani `summarize`.
-
 7. Po uruchomieniu bench tworzy `bench/results/20260906T100000Z` z logami i wynikami z przebiegu. 
-W trakcie podaje też podstawowe informacje o postępie, żeby można było zobaczyć czy w ogóle działa jak powinien, czy warto już zatrzymać i poprawić.
+W trakcie podaje też podstawowe informacje o postępie, żeby można było zobaczyć czy w ogóle działa jak powinien, czy warto już zatrzymać i poprawić ustawienia.
 
 
 ## Szczegóły funkcjonalności
@@ -111,12 +111,15 @@ config: ``--config config.yaml`
 suita: `--suites tools`
 profil: `--profiles greedy`
 
-Pełne testy warto uruchomić dopiero jak już każdy z wymienionych w pliku konfiguracyjnym model został sprawdzony na tych ustawieniach.
+Pełne testy warto uruchomić dopiero jak już każdy z wymienionych w pliku konfiguracyjnym model został sprawdzony na tych ustawieniach. Opcja `--verbose` wypisuje każde oceniane wywołanie HTTP do serwera modeli jako `\n\nRequest:\n` plus surowe ciało POST po wysłaniu, potem `\n\nResponse:\n` plus pełne ciało odpowiedzi po odbiorze. Nie dotyczy preflight ani `summarize`.
+
 Komenda do skopiowania i usunięcia wartości z list, czy parametrów których nie potrzebujesz, jak już podstawowa działa. Zapoznaj się z detalami opcji w poniższych sekcjach.
 
 ```text
-python run.py run --config my.config.yaml --profiles greedy,real --suites tools,agent,coding --prompt-variants neutral,helpful,instructed,harness --out results
+python run.py run --verbose --config my.config.yaml --profiles greedy,real --suites tools,agent,coding --prompt-variants neutral,helpful,instructed,harness --out results
 ```
+
+- `harness` — użyj tylko wtedy, gdy w configu yaml jest uzupełniony system prompt, wysyłany przez używanego agenta (np Hermes).
 
 
 ### Profile samplera
@@ -294,6 +297,7 @@ Profil `greedy` (temperatura 0) jest po to, żeby zobaczyć czy w ogóle działa
 | Ścieżka                                                              | Rola                                                                                          |
 | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
 | `[llama.bat.example](llama.bat.example)` / `[llama.sh.example](llama.sh.example)` | Szablon lokalnego launchera llama-server (`--models-dir`, `--ctx-size`, `--jinja` — wymagane do `tools`). Skopiuj do `llama.bat` albo `llama.sh` i edytuj; te pliki są gitignored. |
+| `[ollama.bat.example](ollama.bat.example)` / `[ollama.sh.example](ollama.sh.example)` | Szablon lokalnego launchera `ollama serve` (`OLLAMA_HOST`, `OLLAMA_CONTEXT_LENGTH`, `OLLAMA_API_KEY`). Skopiuj do `ollama.bat` albo `ollama.sh` i edytuj; te pliki są gitignored. |
 | `[bench/](bench/)`                                                   | Cały benchmark: CLI, przypadki, mocki, sędzia (pliki, bez wołania API).                       |
 | `[bench/config.yaml.example](bench/config.yaml.example)`             | Endpoint, modele, profile samplera, suity i liczba powtórzeń. Do skopiowania do `config.yaml` |
 | `[bench/src/bench/](bench/src/bench/)`                               | Kod: klient, preflight, runner, twarde 0/1, pętla kodowania.                                  |
