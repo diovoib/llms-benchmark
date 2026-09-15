@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Literal
 
 from bench.spec import Case, Expect, Invocation, LaterStep, ToolChoice
 from bench.catalog import (
@@ -250,6 +250,23 @@ def _agent(
         error_cities=list(error_cities or []),
         policy_suffix=policy_suffix,
         followup_user=followup_user,
+    )
+
+
+def _suite_catalog_case(
+    cid: str,
+    suite: Literal["coding", "verification"],
+    *,
+    purpose: str,
+    expected_result: str,
+) -> Case:
+    _require_purpose_and_expected_result(cid, purpose, expected_result)
+    return Case(
+        id=cid,
+        suite=suite,
+        purpose=purpose,
+        expected_result=expected_result,
+        expect=Expect(),
     )
 
 
@@ -959,8 +976,31 @@ def agent_cases() -> list[Case]:
     return out
 
 
+def coding_cases() -> list[Case]:
+    c01_purpose = (
+        "Coding self-repair: one long assistant reply (implement, review, revise) from a fixed "
+        "user spec. No file tools; evidence is the full conversation text."
+    )
+    c01_expected = (
+        "Judge: review_is_real and stopped_with_verdict (FINAL_REVIEW: OK or FINAL_REVIEW: NOK). "
+        "Mechanical NO_STOP when truncated or missing verdict. Not mixed into tools/agent weighted rate."
+    )
+    return [
+        _suite_catalog_case(
+            "C01",
+            "coding",
+            purpose=c01_purpose,
+            expected_result=c01_expected,
+        ),
+    ]
+
+
+def verification_cases() -> list[Case]:
+    return []
+
+
 def all_cases() -> dict[str, Case]:
     out: dict[str, Case] = {}
-    for c in tool_cases() + agent_cases():
+    for c in tool_cases() + agent_cases() + coding_cases() + verification_cases():
         out[c.id] = c
     return out

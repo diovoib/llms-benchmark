@@ -133,6 +133,8 @@ class TestArgumentParsing:
         calls = normalize_tool_calls(
             [openai_tool_call("get_place_details", "{", call_id="c1")]
         )
+        assert len(calls) == 1
+        assert calls[0]["id"] == "c1"
         assert calls[0]["name"] == "get_place_details"
         assert calls[0]["arguments_parsed"] is False
         assert calls[0]["arguments"] is None
@@ -141,6 +143,7 @@ class TestArgumentParsing:
     def test_json_type_ok_integer(self) -> None:
         assert json_type_ok(21, "integer") is True
         assert json_type_ok(True, "integer") is False
+        assert json_type_ok(False, "integer") is False
         assert json_type_ok("21", "integer") is False
         assert json_type_ok(21.0, "integer") is False
 
@@ -148,10 +151,14 @@ class TestArgumentParsing:
         assert json_type_ok(21, "number") is True
         assert json_type_ok(21.5, "number") is True
         assert json_type_ok(True, "number") is False
+        assert json_type_ok(False, "number") is False
+        assert json_type_ok("21", "number") is False
         assert json_type_ok(["Ada", "Bob"], "array") is True
         assert json_type_ok("Ada", "array") is False
         assert json_type_ok({"date": "2026-09-07"}, "object") is True
         assert json_type_ok(["2026-09-07"], "object") is False
+        assert json_type_ok(True, "boolean") is True
+        assert json_type_ok(1, "boolean") is False
 
 
 class TestHourAndWhenMatching:
@@ -179,6 +186,12 @@ class TestHourAndWhenMatching:
     def test_parse_hour_invalid_values(self) -> None:
         for value in (None, True, False, 24, -1, "noon", "9.00", [], {}):
             assert parse_hour(value) is None
+        assert MatchWhen("2026-09-07", 9).matches(
+            {"date": "2026-09-07", "hour": "9.00"}, present=True
+        ) is False
+        assert MatchWhen("2026-09-07", 9).matches(
+            {"date": "2026-09-07", "hour": 24}, present=True
+        ) is False
         assert MatchWhen("2026-09-07", 9).matches({"date": "2026-09-08", "hour": 9}, present=True) is False
         assert MatchWhen("2026-09-07", 9).matches({"date": "2026-09-07"}, present=True) is False
 
@@ -186,8 +199,11 @@ class TestHourAndWhenMatching:
         assert MatchNull.matches(None, present=False) is True
         assert MatchNull.matches(None, present=True) is True
         assert MatchNull.matches("", present=True) is False
+        assert MatchNull.matches("x", present=True) is False
         assert MatchEmpty.matches("", present=True) is True
+        assert MatchEmpty.matches("", present=False) is False
         assert MatchEmpty.matches(None, present=True) is False
+        assert MatchEmpty.matches("x", present=True) is False
 
 
 class TestWrongToolAndSequence:
@@ -210,6 +226,7 @@ class TestWrongToolAndSequence:
         result = chat_ok(tool_calls=[openai_tool_call("calculator", {"expression": "234+567"})])
         score = _tools_score(case, result)
         assert "WRONG_TOOL" in score["violations"]
+        assert score["hard_pass"] is False
 
     def test_t03_en_no_tools(self) -> None:
         case = _case("T03_en")
@@ -223,12 +240,15 @@ class TestWrongToolAndSequence:
         result = chat_ok(tool_calls=[openai_tool_call("get_news", {"topic": "Aries"})])
         score = _tools_score(case, result)
         assert "WRONG_TOOL" in score["violations"]
+        assert score["hard_pass"] is False
 
     def test_t08_en_native_weather_call(self) -> None:
         case = _case("T08_en")
         result = chat_ok(tool_calls=[openai_tool_call("get_current_weather", {"city": WEATHER_CITY_EN})])
         score = _tools_score(case, result)
         assert "WRONG_TOOL" in score["violations"]
+        assert score["hard_pass"] is False
+        assert "LEAKED_TOOL_FORMAT" not in score["violations"]
 
     def test_t07_weather_and_news_either_order(self) -> None:
         case = _case("T07")
@@ -243,6 +263,7 @@ class TestWrongToolAndSequence:
         result = chat_ok(tool_calls=[openai_tool_call("get_current_weather", {"city": "Wrocław"})])
         score = _tools_score(case, result)
         assert "WRONG_TOOL" in score["violations"]
+        assert score["hard_pass"] is False
 
     def test_t17_en_event_and_mail_order(self) -> None:
         case = _case("T17_en")
@@ -260,8 +281,10 @@ class TestWrongToolAndSequence:
         )
         ok = _tools_score(case, chat_ok(tool_calls=[event, mail]))
         assert ok["hard_pass"] is True, ok
+        assert "WRONG_TOOL" not in ok["violations"]
         reversed_score = _tools_score(case, chat_ok(tool_calls=[mail, event]))
         assert "WRONG_TOOL" in reversed_score["violations"]
+        assert reversed_score["hard_pass"] is False
 
     def test_t18_en_expect_london_place_id(self) -> None:
         case = _case("T18_en")
@@ -293,6 +316,8 @@ class TestWrongToolAndSequence:
         ]
         score = _agent_score(case, steps, steps[-1]["content"], hit_max_steps=False)
         assert "WRONG_TOOL" in score["violations"]
+        assert score["hard_pass"] is False
+        assert "IGNORED_OBSERVATION" not in score["violations"]
 
     def test_t18_en_search_then_details_with_needles(self) -> None:
         case = _case("T18_en")
@@ -318,6 +343,7 @@ class TestWrongToolAndSequence:
         ]
         score = _agent_score(case, steps, final, hit_max_steps=False)
         assert score["hard_pass"] is True, score
+        assert score["violations"] == []
 
     def test_t18_pl_search_then_details_with_needles(self) -> None:
         case = _case("T18_pl")
@@ -342,6 +368,7 @@ class TestWrongToolAndSequence:
         ]
         score = _agent_score(case, steps, final, hit_max_steps=False)
         assert score["hard_pass"] is True, score
+        assert score["violations"] == []
         assert case.expect.final_answer_must_include == needles
 
 
@@ -351,6 +378,7 @@ class TestCatalogDiscipline:
         result = chat_ok(tool_calls=[openai_tool_call("get_horoscope", {"sign": "Aries"})])
         score = _tools_score(case, result)
         assert "TOOL_HALLUCINATION" in score["violations"]
+        assert score["hard_pass"] is False
 
     def test_t14_en_forecast(self) -> None:
         case = _case("T14_en")
@@ -358,6 +386,7 @@ class TestCatalogDiscipline:
         score = _tools_score(case, result)
         assert "WRONG_TOOL" in score["violations"]
         assert "TOOL_HALLUCINATION" not in score["violations"]
+        assert score["hard_pass"] is False
 
     def test_t15_en_two_identical_weather_calls(self) -> None:
         case = _case("T15_en")
@@ -388,6 +417,8 @@ class TestCatalogDiscipline:
         )
         score = _tools_score(case, result)
         assert "MISSING_REQUIRED_ARG" in score["violations"]
+        assert score["hard_pass"] is False
+        assert "BAD_JSON_TYPE" not in score["violations"]
 
     def test_t05_thermostat_string_temperature(self) -> None:
         case = _case("T05")
@@ -401,6 +432,7 @@ class TestCatalogDiscipline:
         )
         score = _tools_score(case, result)
         assert "BAD_JSON_TYPE" in score["violations"]
+        assert score["hard_pass"] is False
 
     def test_t05_thermostat_boolean_temperature(self) -> None:
         case = _case("T05")
@@ -408,6 +440,7 @@ class TestCatalogDiscipline:
         result = chat_ok(tool_calls=[openai_tool_call("set_thermostat", raw)])
         score = _tools_score(case, result)
         assert "BAD_JSON_TYPE" in score["violations"]
+        assert score["hard_pass"] is False
 
     def test_t05_thermostat_float_temperature(self) -> None:
         case = _case("T05")
@@ -415,6 +448,7 @@ class TestCatalogDiscipline:
         result = chat_ok(tool_calls=[openai_tool_call("set_thermostat", raw)])
         score = _tools_score(case, result)
         assert "BAD_JSON_TYPE" in score["violations"]
+        assert score["hard_pass"] is False
 
     def test_t05_thermostat_21_eco_heat(self) -> None:
         case = _case("T05")
@@ -440,6 +474,7 @@ class TestCatalogDiscipline:
         )
         score = _tools_score(case, result)
         assert "INVENTED_ARG" in score["violations"]
+        assert score["hard_pass"] is False
 
     def test_t13_en_weather_with_district(self) -> None:
         case = _case("T13_en")
@@ -452,6 +487,7 @@ class TestCatalogDiscipline:
         )
         score = _tools_score(case, result)
         assert "INVENTED_ARG" in score["violations"]
+        assert score["hard_pass"] is False
 
     def test_t13_en_weather_city_only(self) -> None:
         case = _case("T13_en")
@@ -465,6 +501,7 @@ class TestCatalogDiscipline:
         result = chat_ok(tool_calls=[openai_tool_call("get_current_time", {"timezone": "UTC"})])
         score = _tools_score(case, result)
         assert "INVENTED_ARG" in score["violations"]
+        assert score["hard_pass"] is False
 
     def test_t11_en_time_empty_args(self) -> None:
         case = _case("T11_en")
@@ -477,6 +514,8 @@ class TestCatalogDiscipline:
         result = chat_ok(tool_calls=[openai_tool_call("get_paint_status", {"color": "yellow"})])
         score = _tools_score(case, result)
         assert "ENUM_OUT_OF_RANGE" in score["violations"]
+        assert "WRONG_TOOL" in score["violations"]
+        assert score["hard_pass"] is False
 
     def test_t12_en_paint_burgundy(self) -> None:
         case = _case("T12_en")
@@ -484,6 +523,7 @@ class TestCatalogDiscipline:
         score = _tools_score(case, result)
         assert "ENUM_OUT_OF_RANGE" not in score["violations"]
         assert "WRONG_TOOL" in score["violations"]
+        assert score["hard_pass"] is False
 
     def test_t05_thermostat_mode_turbo(self) -> None:
         case = _case("T05")
@@ -497,6 +537,8 @@ class TestCatalogDiscipline:
         )
         score = _tools_score(case, result)
         assert "ENUM_OUT_OF_RANGE" in score["violations"]
+        assert score["hard_pass"] is False
+        assert "BAD_JSON_TYPE" not in score["violations"]
 
     @pytest.mark.parametrize("name", tools_with_required_fields())
     def test_omitting_required_fields(self, name: str) -> None:
@@ -506,6 +548,7 @@ class TestCatalogDiscipline:
         case = _stub_case(tools=[schema])
         violations, _notes, hard_pass = score_call_discipline(case, [normalized_call(name, args)])
         assert "MISSING_REQUIRED_ARG" in violations
+        assert "BAD_JSON_TYPE" not in violations
         assert hard_pass is False
 
     def test_t04_en_weather_london(self) -> None:
@@ -513,12 +556,14 @@ class TestCatalogDiscipline:
         result = chat_ok(tool_calls=[openai_tool_call("get_current_weather", {"city": "London"})])
         score = _tools_score(case, result)
         assert "WRONG_TOOL" in score["violations"]
+        assert score["hard_pass"] is False
 
     def test_t04_en_clarification_no_tools(self) -> None:
         case = _case("T04_en")
         result = chat_ok(content="Which city are you travelling to?")
         score = _tools_score(case, result)
         assert score["hard_pass"] is True
+        assert score["violations"] == []
 
     def test_t10_lookup_exact_vs_ascii_folded(self) -> None:
         case = _case("T10")
@@ -536,6 +581,7 @@ class TestCatalogDiscipline:
             chat_ok(tool_calls=[openai_tool_call("lookup_user", {"user_id": "usr_Zolc-2026-09-06_a"})]),
         )
         assert "WRONG_TOOL" in stripped["violations"]
+        assert stripped["hard_pass"] is False
 
     def test_t06_create_event_hour_spellings(self) -> None:
         case = _case("T06")
@@ -571,6 +617,7 @@ class TestCatalogDiscipline:
         )
         score = _tools_score(case, result)
         assert "INVENTED_ARG" in score["violations"]
+        assert score["hard_pass"] is False
 
     def test_t06_when_without_hour(self) -> None:
         case = _case("T06")
@@ -588,6 +635,7 @@ class TestCatalogDiscipline:
         )
         score = _tools_score(case, result)
         assert "MISSING_REQUIRED_ARG" in score["violations"]
+        assert score["hard_pass"] is False
 
     def test_t06_attendees_string(self) -> None:
         case = _case("T06")
@@ -605,9 +653,41 @@ class TestCatalogDiscipline:
         )
         score = _tools_score(case, result)
         assert "BAD_JSON_TYPE" in score["violations"]
+        assert score["hard_pass"] is False
 
 
 class TestLeakedToolFormat:
+    @pytest.mark.parametrize(
+        "content",
+        [
+            pytest.param("<tool_call>", id="marker_tool_call_open"),
+            pytest.param("</tool_call>", id="marker_tool_call_close"),
+            pytest.param("<tool_response>", id="marker_tool_response_open"),
+            pytest.param("</tool_response>", id="marker_tool_response_close"),
+            pytest.param("<tools>", id="marker_tools_open"),
+            pytest.param("</tools>", id="marker_tools_close"),
+            pytest.param("[TOOL_CALLS]", id="marker_tool_calls_bracket"),
+            pytest.param("[TOOL_RESULTS]", id="marker_tool_results_bracket"),
+            pytest.param("[TOOL_CALL]", id="marker_tool_call_bracket"),
+            pytest.param("<|tool_call|>", id="marker_pipe_tool_call"),
+            pytest.param("<|tool_response|>", id="marker_pipe_tool_response"),
+            pytest.param("<|python_tag|>", id="marker_pipe_python_tag"),
+            pytest.param('<invoke name="get_current_weather">', id="marker_invoke"),
+            pytest.param('<function name="get_current_weather">', id="marker_function"),
+            pytest.param('tool call: {"name": "get_current_weather"}', id="marker_tool_call_brace_space"),
+            pytest.param('tool call:{"name": "get_current_weather"}', id="marker_tool_call_brace_tight"),
+        ],
+    )
+    def test_each_native_marker_literal_in_content(
+        self, content: str
+    ) -> None:
+        assert leak_in_content(content) is True
+        case = _case("T08_en")
+        score = _tools_score(case, chat_ok(content=content))
+        assert "LEAKED_TOOL_FORMAT" in score["violations"]
+        assert score["hard_pass"] is False
+        assert "WRONG_TOOL" not in score["violations"]
+
     @pytest.mark.parametrize(
         "content",
         [
@@ -625,18 +705,24 @@ class TestLeakedToolFormat:
         score = _tools_score(case, chat_ok(content=content))
         assert leak_in_content(content) is True
         assert "LEAKED_TOOL_FORMAT" in score["violations"]
+        assert score["hard_pass"] is False
+        assert "WRONG_TOOL" not in score["violations"]
 
     def test_t08_en_pipe_tool_call_in_content(self) -> None:
         content = "<|tool_call|>call:get_current_weather city=London"
         case = _case("T08_en")
         score = _tools_score(case, chat_ok(content=content))
+        assert leak_in_content(content) is True
         assert "LEAKED_TOOL_FORMAT" in score["violations"]
+        assert score["hard_pass"] is False
 
     def test_t01_en_qwen_tools_block_in_content(self) -> None:
         content = "<tools>\nget_current_weather\n</tools>"
         case = _case("T01_en")
         score = _tools_score(case, chat_ok(content=content))
         assert "LEAKED_TOOL_FORMAT" in score["violations"]
+        assert "WRONG_TOOL" in score["violations"]
+        assert score["hard_pass"] is False
 
 
 class TestObservationScoring:
@@ -671,6 +757,7 @@ class TestObservationScoring:
         ]
         score = _agent_score(case, steps, final, hit_max_steps=False)
         assert "IGNORED_OBSERVATION" in score["violations"]
+        assert score["hard_pass"] is False
 
     @pytest.mark.parametrize("variant", ["neutral", "helpful"])
     def test_a01_pl_final_decimal_comma_celsius(self, variant: PromptVariant) -> None:
@@ -703,6 +790,7 @@ class TestObservationScoring:
         ]
         score = _agent_score(case, steps, final, hit_max_steps=False, prompt_variant="instructed")
         assert "IGNORED_OBSERVATION" in score["violations"]
+        assert score["hard_pass"] is False
 
     def test_a01_pl_instructed_final_payload_celsius(self) -> None:
         case = _bound_weather_variant("A01_pl", 1, "instructed")
@@ -738,6 +826,7 @@ class TestObservationScoring:
         ]
         score = _agent_score(case, steps, final, hit_max_steps=False)
         assert "IGNORED_OBSERVATION" in score["violations"]
+        assert score["hard_pass"] is False
 
     def test_a03_en_final_claims_temperature_after_error(
         self,
@@ -754,6 +843,7 @@ class TestObservationScoring:
         ]
         score = _agent_score(case, steps, final, hit_max_steps=False)
         assert "IGNORED_OBSERVATION" in score["violations"]
+        assert score["hard_pass"] is False
 
     def test_a03_en_final_explains_unknown_city(self) -> None:
         case = _bound_weather("A03_en", 0)
@@ -782,6 +872,7 @@ class TestObservationScoring:
         )
         score = _tools_score(case, result)
         assert "IGNORED_OBSERVATION" in score["violations"]
+        assert score["hard_pass"] is False
 
 
 class TestStopPolicyAndSideEffects:
@@ -801,6 +892,7 @@ class TestStopPolicyAndSideEffects:
         score = _agent_score(case, steps, final, hit_max_steps=True)
         assert "NO_STOP" in score["violations"]
         assert "WRONG_TOOL" not in score["violations"]
+        assert score["hard_pass"] is False
 
     def test_a02_en_weather_then_text(self) -> None:
         case = _bound_weather("A02_en", 1)
@@ -831,6 +923,7 @@ class TestStopPolicyAndSideEffects:
         ]
         score = _agent_score(case, steps, "Deleted.", hit_max_steps=False)
         assert "WRONG_TOOL" in score["violations"]
+        assert score["hard_pass"] is False
 
     def test_a04_en_send_mail(self) -> None:
         case = _case("A04_en")
@@ -850,6 +943,7 @@ class TestStopPolicyAndSideEffects:
         ]
         score = _agent_score(case, steps, "Sent.", hit_max_steps=False)
         assert "WRONG_TOOL" in score["violations"]
+        assert score["hard_pass"] is False
 
     def test_a04_en_no_tools(self) -> None:
         case = _case("A04_en")
@@ -869,6 +963,7 @@ class TestStopPolicyAndSideEffects:
         ]
         score = _agent_score(case, steps, "Disk wiped.", hit_max_steps=False)
         assert "WRONG_TOOL" in score["violations"]
+        assert score["hard_pass"] is False
 
     def test_a07_backup_file(self) -> None:
         case = _case("A07")
@@ -882,6 +977,7 @@ class TestStopPolicyAndSideEffects:
         ]
         score = _agent_score(case, steps, steps[-1]["content"], hit_max_steps=False)
         assert "WRONG_TOOL" in score["violations"]
+        assert score["hard_pass"] is False
 
 
 class TestInfraAndAggregation:
@@ -914,6 +1010,7 @@ class TestInfraAndAggregation:
         assert agg["n_infra"] == 1
         assert agg["n_counted"] == 1
         assert agg["hard_pass_rate"] == 1.0
+        assert agg["n_hard_pass"] == 1
 
     def test_t01_en_case_generation_timeout(self) -> None:
         case = _case("T01_en")
@@ -983,6 +1080,9 @@ class TestInfraAndAggregation:
         assert agg["hard_pass_rate"] is None
         assert agg["mode_agreement"] is None
         assert agg["latency_s_mean"] is None
+        assert agg["prompt_tokens_mean"] is None
+        assert agg["completion_tokens_mean"] is None
+        assert agg["first_tool_response_latency_s_mean"] is None
 
     def test_aggregate_infra_excluded_from_mode_and_means(self) -> None:
         trials = [
@@ -1014,6 +1114,8 @@ class TestInfraAndAggregation:
         agg = aggregate_trials(trials)
         assert agg["n_counted"] == 2
         assert agg["n_infra"] == 1
+        assert agg["n_hard_pass"] == 2
+        assert agg["hard_pass_rate"] == 1.0
         assert agg["mode_agreement"] == 1.0
         assert agg["latency_s_mean"] == 3.0
         assert agg["prompt_tokens_mean"] == 20.0
@@ -1140,6 +1242,8 @@ class TestInfraAndAggregation:
     def test_t18_truncated_place_details_args(self) -> None:
         parsed = normalize_tool_calls([openai_tool_call("get_place_details", "{")])[0]
         assert parsed["arguments_parsed"] is False
+        assert parsed["arguments"] is None
+        assert parsed["arguments_raw"] == "{"
         case = _stub_case(
             tools=[GET_PLACE],
             expect=Expect(required_calls=[Invocation(name="get_place_details")]),
@@ -1212,8 +1316,7 @@ class TestHarnessDoesNotTurnMalformedCallsIntoInfra:
         result, _client = self._run_truncated_place_details_after_london_search()
         truncated_step = result["steps"][1]
         assert truncated_step["normalized"][0]["arguments_parsed"] is False
-        coerced = execute_mock("get_place_details", {})
-        assert coerced not in truncated_step["tool_payloads"]
+        assert truncated_step["tool_payloads"] == []
 
     def test_t18_unparsed_args_not_replayed(self) -> None:
         _result, client = self._run_truncated_place_details_after_london_search()
@@ -1348,6 +1451,7 @@ class TestChatRequestUnparsedArgumentsAreBenchInternalError:
         body = _chat_request_body(original)
         assert original == snapshot
         assert blocked is not None
+        assert blocked.ok is False
         assert blocked.infra_code == BENCH_INTERNAL_ERROR
         assert body["messages"] == original
         assert raw in _outbound_tool_argument_raws(body["messages"])
@@ -1425,10 +1529,11 @@ class TestDimensionCoverage:
     }
 
     def test_dimension_map_covers_all_stems(self) -> None:
-        stems = {case_stem(c.id) for c in tool_cases() + agent_cases()}
+        stems = {case_stem(c.id) for c in all_cases().values()}
         covered = {stem for stems_ in DIMENSIONS.values() for stem in stems_}
         missing = sorted(stems - covered)
         assert missing == []
+        assert sorted(covered - stems) == []
 
     def test_dimension_map_versus_handwritten_buckets(self) -> None:
         assert DIMENSIONS == self.EXPECTED_DIMENSIONS
@@ -1449,6 +1554,7 @@ class TestModeKeyAndSuiteWeights:
         assert leaked != same_a
         no_tools = mode_key([], "The temperature is unknown.", "stop")
         assert no_tools != same_a
+        assert leaked != no_tools
 
     def test_suite_weights(self) -> None:
         assert SUITE_WEIGHTS == {"tools": 1.0, "agent": 2.0, "coding": 0.0}
@@ -1504,8 +1610,15 @@ class TestCasesThatWereOnlyInTheDimensionMap:
 class TestCaseProse:
     def test_twins_same_purpose_and_expected_result_fields(self) -> None:
         catalog = all_cases()
-        assert catalog["T01_pl"].purpose == catalog["T01_en"].purpose
-        assert catalog["T01_pl"].expected_result == catalog["T01_en"].expected_result
+        for en_id, en_case in catalog.items():
+            if not en_id.endswith("_en"):
+                continue
+            pl_id = f"{en_id[:-3]}_pl"
+            if pl_id not in catalog:
+                continue
+            pl_case = catalog[pl_id]
+            assert pl_case.purpose == en_case.purpose, (en_id, pl_id)
+            assert pl_case.expected_result == en_case.expected_result, (en_id, pl_id)
         for cid, row in catalog.items():
             assert row.purpose, cid
             assert row.expected_result, cid

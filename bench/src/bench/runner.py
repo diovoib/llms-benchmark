@@ -91,11 +91,6 @@ def selected_case_ids(cfg: dict[str, Any], suites: list[str]) -> list[str]:
         for cid in spec.get("cases") or []:
             if cid in seen:
                 continue
-            if cid == "C01":
-                if name == "coding":
-                    seen.add(cid)
-                    ids.append(cid)
-                continue
             case = catalog.get(cid)
             if not case or case.suite != name:
                 continue
@@ -524,7 +519,11 @@ def run_benchmark(
                 dest_profile.mkdir(parents=True, exist_ok=True)
                 client = _make_client(cfg, model, interrupt_event, on_live_armed)
                 register_client(client)
-                tool_case_ids = [c for c in case_ids if c != "C01"]
+                tool_case_ids = [
+                    c
+                    for c in case_ids
+                    if (catalog.get(c) and catalog[c].suite in ("tools", "agent"))
+                ]
                 tools_timeout = _suite_timeout(cfg, "tools")
                 tools_max_tokens = _suite_max_tokens(cfg, "tools")
                 log_flush_bytes = int(cfg.get("log_flush_bytes") or 256)
@@ -595,7 +594,7 @@ def run_benchmark(
                         sweep_max_tokens = _suite_max_tokens(cfg, sweep_suite)
                         for temp in sweep_cfg.get("temperatures") or []:
                             for cid in sweep_ids:
-                                if cid not in catalog or cid == "C01" or cid not in tool_case_ids:
+                                if cid not in catalog or cid not in tool_case_ids:
                                     continue
                                 seed = choose_seed(profile, f"SWEEP-{cid}", 0, variant_name)
                                 sampler = sampler_kwargs(profile, model, seed)
@@ -728,70 +727,80 @@ def run_benchmark(
                             finish_trial_console(t0, hp, score_reasons(trial.get("score")))
                     write_summary_tree(run_dir)
 
-                if "C01" in case_ids:
+                coding_case_ids = [
+                    c for c in case_ids if catalog.get(c) and catalog[c].suite == "coding"
+                ]
+                if coding_case_ids:
                     nrep = repeats_for(cfg, "coding", profile_name)
                     coding_client = _make_client(cfg, model, interrupt_event, on_live_armed)
                     register_client(coding_client)
                     coding_timeout = _suite_timeout(cfg, "coding")
                     coding_max_tokens = int(cfg["ctx_size"])
-                    for rep in range(nrep):
-                        seed = choose_seed(profile, "C01", rep)
-                        sampler = sampler_kwargs(profile, model, seed)
-                        trial_id = opaque_id(str(model["name"]), profile_name, "C01", str(rep))
-                        cdir = dest_profile / "coding" / f"trial_{rep + 1:03d}"
-                        pending_line = True
-                        pending_trial_jsons = [
-                            cdir / "trial.json",
-                            cdir / "conversation.json",
-                            cdir / "meta.json",
-                        ]
-                        t0 = line_start(
-                            trial_label(
-                                case_id="C01",
-                                suite="coding",
-                                profile=profile_name,
-                                variant="—",
-                                repeat=rep,
-                                nrep=nrep,
-                                seed=seed,
+                    for cid in coding_case_ids:
+                        for rep in range(nrep):
+                            seed = choose_seed(profile, cid, rep)
+                            sampler = sampler_kwargs(profile, model, seed)
+                            trial_id = opaque_id(
+                                str(model["name"]), profile_name, cid, str(rep)
                             )
-                        )
-                        row = run_coding_trial(
-                            client=coding_client,
-                            sampler=sampler,
-                            trial_dir=cdir,
-                            max_rounds=int(cfg.get("max_coding_rounds") or 7),
-                            max_tokens=coding_max_tokens,
-                            request_timeout_s=coding_timeout,
-                            stream=True,
-                            log_flush_bytes=log_flush_bytes,
-                            verbose=verbose,
-                            on_progress_bytes=log_flush_bytes,
-                        )
-                        row.update({
-                            "trial_id": trial_id,
-                            "case_id": "C01",
-                            "suite": "coding",
-                            "repeat": rep,
-                            "seed": seed,
-                            "prompt_variant": None,
-                            "in_progress": False,
-                            "transcript_text": (cdir / "conversation.txt").read_text(encoding="utf-8"),
-                        })
-                        write_json(
-                            cdir / "trial.json",
-                            {k: v for k, v in row.items() if k != "transcript_text"},
-                        )
-                        pending_trial_jsons = []
-                        coding_rows.append(row)
-                        all_trials.append(row)
-                        coding_ok = bool(row.get("python_checks_ok")) and not row.get("infra")
-                        reasons = []
-                        if row.get("infra"):
-                            reasons.append(str(row.get("infra")))
-                        if not row.get("python_checks_ok"):
-                            reasons.append("python_checks")
-                        finish_trial_console(t0, coding_ok, reasons)
+                            cdir = dest_profile / "coding" / cid / f"trial_{rep + 1:03d}"
+                            pending_line = True
+                            pending_trial_jsons = [
+                                cdir / "trial.json",
+                                cdir / "conversation.json",
+                                cdir / "meta.json",
+                            ]
+                            t0 = line_start(
+                                trial_label(
+                                    case_id=cid,
+                                    suite="coding",
+                                    profile=profile_name,
+                                    variant="—",
+                                    repeat=rep,
+                                    nrep=nrep,
+                                    seed=seed,
+                                )
+                            )
+                            row = run_coding_trial(
+                                client=coding_client,
+                                sampler=sampler,
+                                trial_dir=cdir,
+                                max_rounds=int(cfg.get("max_coding_rounds") or 7),
+                                max_tokens=coding_max_tokens,
+                                request_timeout_s=coding_timeout,
+                                stream=True,
+                                log_flush_bytes=log_flush_bytes,
+                                verbose=verbose,
+                                on_progress_bytes=log_flush_bytes,
+                            )
+                            row.update({
+                                "trial_id": trial_id,
+                                "case_id": cid,
+                                "suite": "coding",
+                                "repeat": rep,
+                                "seed": seed,
+                                "prompt_variant": None,
+                                "in_progress": False,
+                                "transcript_text": (
+                                    cdir / "conversation.txt"
+                                ).read_text(encoding="utf-8"),
+                            })
+                            write_json(
+                                cdir / "trial.json",
+                                {k: v for k, v in row.items() if k != "transcript_text"},
+                            )
+                            pending_trial_jsons = []
+                            coding_rows.append(row)
+                            all_trials.append(row)
+                            coding_ok = bool(row.get("python_checks_ok")) and not row.get(
+                                "infra"
+                            )
+                            reasons = []
+                            if row.get("infra"):
+                                reasons.append(str(row.get("infra")))
+                            if not row.get("python_checks_ok"):
+                                reasons.append("python_checks")
+                            finish_trial_console(t0, coding_ok, reasons)
                     write_summary_tree(run_dir)
     except KeyboardInterrupt:
         interrupted = True

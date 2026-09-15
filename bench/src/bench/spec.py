@@ -53,7 +53,7 @@ class Case:
     id: str
     """Stable id (T01_pl, A06_en, …). Config, results paths, and dimension stems key off this."""
 
-    suite: Literal["tools", "agent"]
+    suite: Literal["tools", "agent", "coding", "verification"]
     """Which runner loop and suite weight apply. tools is typically one model turn; agent is the multi-step loop."""
 
     purpose: str
