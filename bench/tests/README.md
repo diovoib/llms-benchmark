@@ -48,7 +48,7 @@ The live loop substitutes an empty object whenever parsed arguments are missing,
 
 **test_omitting_required_fields_does_not_return_a_successful_observation.** For every function whose schema lists required keys, calling it with those keys omitted must not return a successful observation (no temperature, no forecast token, no executed-delete token, no `ok: true` write, no active user, and so on).
 
-**test_truncated_non_object_arguments_do_not_return_a_successful_observation.** The same functions, plus those that take an empty object, must not treat a truncated `{` as a successful empty call.
+**test_truncated_non_object_arguments_do_not_return_a_successful_observation.** For every advertised function name, a truncated `{` argument blob must yield exactly `UNPARSED_ARGUMENTS` and must not look like a successful observation.
 
 ### Current weather
 
@@ -56,7 +56,7 @@ The live loop substitutes an empty object whenever parsed arguments are missing,
 
 **test_new_york_returns_fahrenheit_fixture.** A current-weather call for New York must return the Fahrenheit fixture from the same file (`57.4` and `°F`). Repeat index must not switch the unit.
 
-**test_observation_substrings_match_the_payload_for_the_city.** The substrings the scorer requires in the final answer must actually appear in the weather payload for that city, and they must be the fixture tokens for Wrocław/Celsius or New York/Fahrenheit. This catches drift between the fixture file, the weather function, and the observation checker.
+**test_weather_needles_align_fixture_and_tool_message_for_city.** For Wrocław, New York, and London, `weather_required_substrings` (used in case `final_answer_must_include`), `fixtures/tokens.json`, and the JSON from `execute_mock` must list the same temperature and unit strings.
 
 **test_unknown_registry_city_returns_error_instead_of_weather.** When the case marks a city as unknown (the `Zxxyyq` error-handling case), the weather function must return an `UNKNOWN_CITY` error and must not invent a temperature. A fake temperature would let the model “succeed” after a registry miss.
 

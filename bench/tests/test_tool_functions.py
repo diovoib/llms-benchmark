@@ -54,6 +54,14 @@ def _json(name: str, arguments: dict[str, Any] | Any, extra: dict[str, Any] | No
         return raw
 
 
+def _assert_acknowledgement_stub(tool: str, arguments: dict[str, Any]) -> None:
+    payload = _json(tool, arguments)
+    assert set(payload.keys()) == {"ok", "tool", "args"}
+    assert payload["ok"] is True
+    assert payload["tool"] == tool
+    assert payload["args"] == arguments
+
+
 def _is_acknowledgement_stub(payload: Any) -> bool:
     if not isinstance(payload, dict):
         return False
@@ -279,7 +287,8 @@ class TestRequiredArgumentsAreNotSuccessfulObservations:
     @pytest.mark.parametrize("name", sorted(advertised_tool_schemas()))
     def test_truncated_non_object_arguments_do_not_return_a_successful_observation(self, name: str) -> None:
         raw = execute_mock(name, "{")
-        assert not _looks_like_success(name, raw, "{")
+        assert json.loads(raw) == {"error": "UNPARSED_ARGUMENTS"}
+        assert not _observation_raw_looks_like_success(name, raw)
 
 
 class TestCurrentWeather:
@@ -293,8 +302,9 @@ class TestCurrentWeather:
         payload = _json("get_current_weather", {"city": "New York"})
         assert payload["temperature"] == float(weather_tokens["TOKEN_WEATHER_F"])
         assert payload["unit"] == weather_tokens["TOKEN_WEATHER_F_UNIT"]
+        assert payload["sky"]
 
-    def test_observation_substrings_match_the_payload_for_the_city(
+    def test_weather_needles_align_fixture_and_tool_message_for_city(
         self, weather_tokens: dict[str, str]
     ) -> None:
         for city, temp_key, unit_key in (
@@ -302,13 +312,14 @@ class TestCurrentWeather:
             ("New York", "TOKEN_WEATHER_F", "TOKEN_WEATHER_F_UNIT"),
             ("London", "TOKEN_WEATHER_C", "TOKEN_WEATHER_C_UNIT"),
         ):
-            payload = weather_payload(city)
+            payload = _json("get_current_weather", {"city": city})
             needles = weather_required_substrings(city)
+            expected_needles = [weather_tokens[temp_key], weather_tokens[unit_key]]
+            assert needles == expected_needles
+            assert needles == [str(payload["temperature"]), str(payload["unit"])]
             blob = json.dumps(payload, ensure_ascii=False)
             for needle in needles:
                 assert needle in blob
-            assert weather_tokens[temp_key] in needles
-            assert weather_tokens[unit_key] in needles
 
     def test_unknown_registry_city_returns_error_instead_of_weather(self) -> None:
         payload = execute_mock(
@@ -321,30 +332,36 @@ class TestCurrentWeather:
         assert data["error"] == "UNKNOWN_CITY"
         assert "temperature" not in data
 
-    def test_ordinary_city_is_not_turned_into_an_unknown_city_error(self) -> None:
+    def test_ordinary_city_is_not_turned_into_an_unknown_city_error(
+        self, weather_tokens: dict[str, str]
+    ) -> None:
         payload = _json(
             "get_current_weather",
             {"city": "London"},
             {"error_cities": ["Zxxyyq"]},
         )
         assert "error" not in payload
-        assert "temperature" in payload
+        needles = weather_required_substrings("London")
+        expected_needles = [
+            weather_tokens["TOKEN_WEATHER_C"],
+            weather_tokens["TOKEN_WEATHER_C_UNIT"],
+        ]
+        assert needles == expected_needles
+        assert needles == [str(payload["temperature"]), str(payload["unit"])]
 
-    def test_optional_district_does_not_change_the_city_observation_tokens(
-        self, weather_tokens: dict[str, str]
-    ) -> None:
+    def test_optional_district_does_not_change_the_city_observation_tokens(self) -> None:
         with_district = _json(
             "get_current_weather",
             {"city": "New York", "district": "Manhattan"},
         )
         without = _json("get_current_weather", {"city": "New York"})
-        assert with_district["temperature"] == without["temperature"]
-        assert with_district["unit"] == weather_tokens["TOKEN_WEATHER_F_UNIT"]
+        assert with_district == without
 
 
 class TestForecastNewsAndTime:
-    def test_forecast_echoes_city_and_returns_the_forecast_observation_token(self) -> None:
-        payload = _json("get_forecast", {"city": "Wrocław", "days": 5})
+    @pytest.mark.parametrize("days", [1, 5])
+    def test_forecast_echoes_city_and_returns_the_forecast_observation_token(self, days: int) -> None:
+        payload = _json("get_forecast", {"city": "Wrocław", "days": days})
         assert payload["city"] == "Wrocław"
         assert payload["token"] == TOKEN_FORECAST
 
@@ -357,7 +374,8 @@ class TestForecastNewsAndTime:
 
     def test_current_time_returns_the_stable_utc_timestamp(self) -> None:
         payload = _json("get_current_time", {})
-        assert payload["utc"] == "2026-09-06T12:00:00Z"
+        assert set(payload.keys()) == {"utc"}
+        assert payload["utc"] == "2026-09-06T12:23:34Z"
 
 
 class TestSearchAndPlaceDetails:
@@ -367,7 +385,7 @@ class TestSearchAndPlaceDetails:
         results = payload["results"]
         assert len(results) == 1
         assert results[0]["place_id"] == TOKEN_PLACE_ID
-        assert "Wrocław" in results[0]["name"] or "Wroclaw" in results[0]["name"]
+        assert results[0]["name"] == "Wrocław"
 
     @pytest.mark.parametrize("query", ["London", "london", "Find London"])
     def test_search_finds_london_place_id(self, query: str) -> None:
@@ -408,10 +426,21 @@ class TestSearchAndPlaceDetails:
         assert payload["got"] == "PLACE_ID_FROM_SEARCH"
         assert "summary" not in payload
 
-    def test_search_hit_can_be_resolved_by_place_details(self) -> None:
-        hit = _json("search", {"query": "London"})["results"][0]["place_id"]
+    @pytest.mark.parametrize(
+        ("query", "expected_place_id", "expected_name"),
+        [
+            ("London", TOKEN_PLACE_ID_LONDON, "London"),
+            ("Wrocław", TOKEN_PLACE_ID, "Wrocław"),
+        ],
+    )
+    def test_search_hit_can_be_resolved_by_place_details(
+        self, query: str, expected_place_id: str, expected_name: str
+    ) -> None:
+        hit = _json("search", {"query": query})["results"][0]["place_id"]
+        assert hit == expected_place_id
         details = _json("get_place_details", {"place_id": hit})
-        assert details["name"] == "London"
+        assert details["place_id"] == hit
+        assert details["name"] == expected_name
         assert "error" not in details
 
 
@@ -438,9 +467,10 @@ class TestLookupAndStructuredWrites:
         assert payload["ok"] is True
         assert payload["args"] == args
 
-    def test_paint_status_returns_queued_for_an_allowed_color(self) -> None:
-        payload = _json("get_paint_status", {"color": "burgundy"})
-        assert payload["color"] == "burgundy"
+    @pytest.mark.parametrize("color", ["burgundy", "navy", "ivory"])
+    def test_paint_status_returns_queued_for_an_allowed_color(self, color: str) -> None:
+        payload = _json("get_paint_status", {"color": color})
+        assert payload["color"] == color
         assert payload["status"] == "queued"
 
 
@@ -468,57 +498,25 @@ class TestSideEffectTokens:
 
 class TestAcknowledgementStubs:
     def test_calculator_with_an_expression(self) -> None:
-        arguments = {"expression": "234+567"}
-        payload = _json("calculator", arguments)
-        assert payload.get("ok") is True
-        assert payload.get("tool") == "calculator"
-        assert payload.get("args") == arguments
+        _assert_acknowledgement_stub("calculator", {"expression": "234+567"})
 
     def test_currency_rates_with_a_base(self) -> None:
-        arguments = {"base": "PLN"}
-        payload = _json("get_currency_rates", arguments)
-        assert payload.get("ok") is True
-        assert payload.get("tool") == "get_currency_rates"
-        assert payload.get("args") == arguments
+        _assert_acknowledgement_stub("get_currency_rates", {"base": "PLN"})
 
     def test_stock_price_with_a_symbol(self) -> None:
-        arguments = {"symbol": "AAPL"}
-        payload = _json("get_stock_price", arguments)
-        assert payload.get("ok") is True
-        assert payload.get("tool") == "get_stock_price"
-        assert payload.get("args") == arguments
+        _assert_acknowledgement_stub("get_stock_price", {"symbol": "AAPL"})
 
     def test_traffic_with_a_city(self) -> None:
-        arguments = {"city": "London"}
-        payload = _json("get_traffic", arguments)
-        assert payload.get("ok") is True
-        assert payload.get("tool") == "get_traffic"
-        assert payload.get("args") == arguments
+        _assert_acknowledgement_stub("get_traffic", {"city": "London"})
 
     def test_air_quality_with_a_city(self) -> None:
-        arguments = {"city": "London"}
-        payload = _json("get_air_quality", arguments)
-        assert payload.get("ok") is True
-        assert payload.get("tool") == "get_air_quality"
-        assert payload.get("args") == arguments
+        _assert_acknowledgement_stub("get_air_quality", {"city": "London"})
 
     def test_translate_text_with_text_and_target_lang(self) -> None:
-        arguments = {"text": "hello", "target_lang": "pl"}
-        payload = _json("translate_text", arguments)
-        assert payload.get("ok") is True
-        assert payload.get("tool") == "translate_text"
-        assert payload.get("args") == arguments
+        _assert_acknowledgement_stub("translate_text", {"text": "hello", "target_lang": "pl"})
 
     def test_list_directory_with_a_path(self) -> None:
-        arguments = {"path": "/tmp"}
-        payload = _json("list_directory", arguments)
-        assert payload.get("ok") is True
-        assert payload.get("tool") == "list_directory"
-        assert payload.get("args") == arguments
+        _assert_acknowledgement_stub("list_directory", {"path": "/tmp"})
 
     def test_read_note_with_a_note_id(self) -> None:
-        arguments = {"note_id": "n1"}
-        payload = _json("read_note", arguments)
-        assert payload.get("ok") is True
-        assert payload.get("tool") == "read_note"
-        assert payload.get("args") == arguments
+        _assert_acknowledgement_stub("read_note", {"note_id": "n1"})
