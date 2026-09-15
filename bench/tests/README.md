@@ -20,25 +20,27 @@ These cases exercise the functions listed in the tool catalog. They do not start
 
 **test_every_name_a_case_exposes_has_a_non_empty_mock.** Every function name that appears on a scored case must produce a non-empty string when called with that example invocation. A case that offers a name the harness cannot execute is an incomplete bench.
 
-**test_shared_eight_tool_catalog_is_exactly_what_those_cases_expose.** The eight-tool catalog must be the same list of names the catalog-discipline and no-calculator math cases actually send to the model. If the shared list and those cases diverge, a distractor can vanish from one surface and remain on the other.
+**test_unknown_catalog_name_returns_unknown_tool_error.** Calling `execute_mock` with a name outside the bench tool catalog (for example `get_horoscope`) must return `UNKNOWN_TOOL` and must not fall through to a generic acknowledgement stub.
 
-**test_shared_large_catalog_is_exactly_what_the_large_catalog_case_exposes.** The large catalog must be the same list of names the large-catalog agent case sends to the model.
+**test_eight_tool_catalog_versus_t02_and_t03.** The eight-tool catalog must be the same list of names T02 and both T03 language twins actually send to the model. If the shared list and those cases diverge, a distractor can vanish from one surface and remain on the other.
 
-**test_optional_weather_case_exposes_district_and_the_basic_catalog_does_not.** The optional-argument weather case must advertise `district`. The basic weather case and the eight-tool catalog must not. The function name is still `get_current_weather`; only the parameter schema changes.
+**test_large_catalog_versus_a05.** The large catalog must be the same list of names the large-catalog agent case sends to the model.
 
-**test_catalog_eight_and_large_only_contain_declared_function_tools.** The small eight-tool catalog and the large catalog must contain only function tools whose parameters are JSON objects that reject undeclared keys. Extra or malformed catalog entries would let the model call something the rest of the bench cannot score.
+**test_optional_weather_case_exposes_district_and_the_basic_catalog_does_not.** Both T13 language twins must advertise `district`. Both T01 language twins and the eight-tool catalog must not. The function name is still `get_current_weather`; only the parameter schema changes.
 
-**test_optional_weather_schema_exposes_district_without_requiring_it.** The weather tool used when optional arguments are under test must advertise `district` as optional and must still require `city`.
+**test_catalog_eight_and_large_only_contain_declared_function_tools.** The small eight-tool catalog and the large catalog must contain only function tools whose parameters are JSON objects with a `properties` map that reject undeclared keys. Extra or malformed catalog entries would let the model call something the rest of the bench cannot score.
 
-**test_paint_status_enum_does_not_include_yellow.** Paint status may only be requested for burgundy, navy, or ivory. Yellow is the value the user asks for in the refuse-to-guess paint case, so it must stay outside the enum.
+**test_optional_weather_schema_exposes_district_without_requiring_it.** The weather tool used when optional arguments are under test must advertise `district` as an optional string and must still require `city` as a string in `properties`.
 
-**test_thermostat_mode_enum_and_integer_temperature.** Setting the thermostat requires an integer Celsius value, a boolean eco flag, and a mode that is exactly `heat`, `cool`, or `off`. A string temperature or a free-form mode is a type or enum error, not a successful setting.
+**test_paint_status_enum_does_not_include_yellow.** Paint status may only be requested for burgundy, navy, or ivory, and `color` must stay required. Yellow is the value the user asks for in the refuse-to-guess paint case, so it must stay outside the enum.
 
-**test_create_event_nested_when_requires_date_and_hour.** Creating an event requires a nested `when` object that contains both a date and an hour and that rejects extra keys. Scoring of the standup event cases depends on that shape.
+**test_thermostat_mode_enum_and_integer_temperature.** Setting the thermostat requires all three keys: an integer Celsius value, a boolean eco flag, and a mode that is exactly `heat`, `cool`, or `off`. A string temperature or a free-form mode is a type or enum error, not a successful setting.
 
-**test_get_current_time_declares_no_parameters.** The time tool must take an empty argument object. Any key the model adds is an invented argument.
+**test_create_event_nested_when_requires_date_and_hour.** Creating an event requires `title`, `attendees` as an array of strings, and a nested `when` object that contains both a date and an hour and that rejects extra keys. Scoring of the standup event cases depends on that shape.
 
-**test_send_mail_body_is_optional.** Sending mail requires `to` and `subject`. The body may be omitted. The ordered create-event-then-mail case only fills the required keys.
+**test_get_current_time_declares_no_parameters.** The time tool must take an empty argument object with `additionalProperties` false. Any key the model adds is an invented argument.
+
+**test_send_mail_body_is_optional.** Sending mail requires `to` and `subject` as declared properties. The body may be omitted. The ordered create-event-then-mail case only fills the required keys.
 
 ### Required arguments and truncated JSON
 
@@ -112,7 +114,7 @@ The live loop substitutes an empty object whenever parsed arguments are missing,
 
 ### Domain tools that the model is allowed to call
 
-These names appear in the catalogs the model sees. If the model calls them, they must implement the behaviour advertised in their descriptions rather than returning a generic acknowledgement such as `{ok, tool, args}` or `{ok: true}`.
+These names appear in the catalogs the model sees. If the model calls them, they return a generic acknowledgement `{ok, tool, args}`.
 
 **test_calculator_with_an_expression.** The calculator is an acknowledgement stub: given an `expression`, it returns `ok`, `tool` `calculator`, and those same arguments. The no-calculator math case (T03) fails as `WRONG_TOOL` if the model calls any tool, including calculator, so the observation is not scored as arithmetic.
 
@@ -128,7 +130,7 @@ These names appear in the catalogs the model sees. If the model calls them, they
 
 **test_list_directory_with_a_path.** List directory is an acknowledgement stub: given a `path`, it returns `ok`, `tool` `list_directory`, and those same arguments.
 
-**test_read_note_returns_note_content.** Read note must echo `note_id` `n1` and a non-empty `content` string. Returning only the id is not reading the note.
+**test_read_note_with_a_note_id.** Read note is an acknowledgement stub: given a `note_id`, it returns `ok`, `tool` `read_note`, and those same arguments.
 
 ### Schema versus observation
 
@@ -354,7 +356,7 @@ These cases are the mechanical counterpart of the `IGNORED_OBSERVATION` rows tha
 
 **test_dimension_map_covers_all_stems.** Every tools and agent case family must belong to a scoring dimension. A case that is missing from the dimension map would disappear from the headline breakdown.
 
-**test_dimension_map_equals_expected_buckets.** Listing a stem anywhere in the map is not enough. T15 belongs under argument correctness, T16 and A06 under long-context memory, A05 under catalog discipline, and so on, matching the published dimension table. Moving a stem into the wrong bucket must fail even if the stem is still present somewhere.
+**test_dimension_map_versus_handwritten_buckets.** Listing a stem anywhere in the map is not enough. T15 belongs under argument correctness, T16 and A06 under long-context memory, A05 under catalog discipline, and so on, matching the published dimension table. Moving a stem into the wrong bucket must fail even if the stem is still present somewhere.
 
 **test_dimension_map_a01_t18_a03.** Observation use must include the A01 weather-agent family. Dependent chain must include T18. Error handling must include A03. Those are the families that produced `IGNORED_OBSERVATION` and `INFRA_ERROR` in `results2`. The map stores stems, so A01 covers both language twins.
 

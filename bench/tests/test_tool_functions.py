@@ -116,6 +116,53 @@ def _looks_like_success(name: str, raw: str, arguments: Any) -> bool:
     return False
 
 
+def _observation_raw_looks_like_success(name: str, raw: str) -> bool:
+    """True when the observation string alone looks like a completed tool result."""
+    if name == "delete_file":
+        return raw == TOKEN_DELETE
+    if name == "send_mail":
+        return raw == TOKEN_MAIL
+    if name == "backup_file":
+        return raw == TOKEN_BACKUP
+    if name == "wipe_disk":
+        return raw == TOKEN_WIPE
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return False
+    if _is_acknowledgement_stub(payload):
+        return False
+    if payload.get("error"):
+        return False
+    if name == "get_current_weather":
+        return "temperature" in payload
+    if name == "get_forecast":
+        return bool(payload.get("token"))
+    if name == "get_news":
+        headlines = payload.get("headlines")
+        return isinstance(headlines, list) and bool(headlines)
+    if name == "get_current_time":
+        utc = payload.get("utc")
+        return isinstance(utc, str) and utc.endswith("Z")
+    if name == "search":
+        results = payload.get("results")
+        return isinstance(results, list) and bool(results)
+    if name == "get_place_details":
+        return "summary" in payload
+    if name == "lookup_user":
+        return payload.get("status") == "active"
+    if name == "set_thermostat":
+        return payload.get("ok") is True
+    if name == "create_event":
+        return payload.get("ok") is True
+    if name == "get_paint_status":
+        return payload.get("status") == "queued"
+    if name == "read_note":
+        content = payload.get("content")
+        return isinstance(content, str) and bool(content.strip())
+    return False
+
+
 class TestCatalogSurface:
     def test_invocation_fixtures_match_every_name_catalogs_and_cases_advertise(self) -> None:
         advertised = set(advertised_tool_schemas())
@@ -129,24 +176,30 @@ class TestCatalogSurface:
             assert isinstance(raw, str)
             assert raw != ""
 
-    def test_shared_eight_tool_catalog_is_exactly_what_those_cases_expose(self) -> None:
+    def test_eight_tool_catalog_versus_t02_and_t03(self) -> None:
         catalog_names = [function_name(tool) for tool in CATALOG_8]
         cases = all_cases()
         assert [function_name(tool) for tool in cases["T02"].tools] == catalog_names
         assert [function_name(tool) for tool in cases["T03_en"].tools] == catalog_names
         assert [function_name(tool) for tool in cases["T03_pl"].tools] == catalog_names
 
-    def test_shared_large_catalog_is_exactly_what_the_large_catalog_case_exposes(self) -> None:
+    def test_large_catalog_versus_a05(self) -> None:
         catalog_names = [function_name(tool) for tool in CATALOG_LARGE]
         assert [function_name(tool) for tool in all_cases()["A05"].tools] == catalog_names
 
     def test_optional_weather_case_exposes_district_and_the_basic_catalog_does_not(self) -> None:
-        optional = all_cases()["T13_en"].tools[0]
-        basic = all_cases()["T01_en"].tools[0]
-        assert function_name(optional) == "get_current_weather"
-        assert function_name(basic) == "get_current_weather"
-        assert "district" in schema_properties(optional)
-        assert "district" not in schema_properties(basic)
+        optional_en = all_cases()["T13_en"].tools[0]
+        basic_en = all_cases()["T01_en"].tools[0]
+        optional_pl = all_cases()["T13_pl"].tools[0]
+        basic_pl = all_cases()["T01_pl"].tools[0]
+        assert function_name(optional_en) == "get_current_weather"
+        assert function_name(basic_en) == "get_current_weather"
+        assert function_name(optional_pl) == "get_current_weather"
+        assert function_name(basic_pl) == "get_current_weather"
+        assert "district" in schema_properties(optional_en)
+        assert "district" not in schema_properties(basic_en)
+        assert "district" in schema_properties(optional_pl)
+        assert "district" not in schema_properties(basic_pl)
         assert "district" not in schema_properties(GET_CURRENT_WEATHER)
         assert "district" in schema_properties(GET_CURRENT_WEATHER_OPTIONAL)
 
@@ -159,6 +212,8 @@ class TestCatalogSurface:
                 params = (tool.get("function") or {}).get("parameters") or {}
                 assert params.get("type") == "object"
                 assert params.get("additionalProperties") is False
+                assert "properties" in params
+                assert isinstance(params.get("properties"), dict)
 
     def test_optional_weather_schema_exposes_district_without_requiring_it(self) -> None:
         required = schema_required(GET_CURRENT_WEATHER_OPTIONAL)
@@ -166,20 +221,29 @@ class TestCatalogSurface:
         assert "city" in required
         assert "district" not in required
         assert "district" in props
+        assert "city" in props
+        assert props["city"].get("type") == "string"
+        assert props["district"].get("type") == "string"
 
     def test_paint_status_enum_does_not_include_yellow(self) -> None:
         color = schema_properties(PAINT_STATUS)["color"]
         assert color.get("enum") == ["burgundy", "navy", "ivory"]
         assert "yellow" not in color["enum"]
+        assert schema_required(PAINT_STATUS) == ["color"]
 
     def test_thermostat_mode_enum_and_integer_temperature(self) -> None:
         props = schema_properties(SET_THERMOSTAT)
         assert props["temperature_c"]["type"] == "integer"
         assert props["eco_mode"]["type"] == "boolean"
         assert props["mode"]["enum"] == ["heat", "cool", "off"]
+        assert set(schema_required(SET_THERMOSTAT)) == {"temperature_c", "eco_mode", "mode"}
 
     def test_create_event_nested_when_requires_date_and_hour(self) -> None:
         when = schema_properties(CREATE_EVENT)["when"]
+        assert set(schema_required(CREATE_EVENT)) == {"title", "attendees", "when"}
+        attendees = schema_properties(CREATE_EVENT)["attendees"]
+        assert attendees.get("type") == "array"
+        assert attendees.get("items") == {"type": "string"}
         assert when["type"] == "object"
         assert set(when["required"]) == {"date", "hour"}
         assert when.get("additionalProperties") is False
@@ -187,10 +251,20 @@ class TestCatalogSurface:
     def test_get_current_time_declares_no_parameters(self) -> None:
         assert schema_properties(GET_TIME) == {}
         assert schema_required(GET_TIME) == []
+        params = (GET_TIME.get("function") or {}).get("parameters") or {}
+        assert params.get("additionalProperties") is False
 
     def test_send_mail_body_is_optional(self) -> None:
+        props = schema_properties(SEND_MAIL)
         assert set(schema_required(SEND_MAIL)) == {"to", "subject"}
-        assert "body" in schema_properties(SEND_MAIL)
+        assert "to" in props and "subject" in props
+        assert "body" in props
+
+
+class TestExecuteMock:
+    def test_unknown_catalog_name_returns_unknown_tool_error(self) -> None:
+        payload = _json("get_horoscope", {})
+        assert payload == {"error": "UNKNOWN_TOOL", "name": "get_horoscope"}
 
 
 class TestRequiredArgumentsAreNotSuccessfulObservations:
@@ -200,7 +274,7 @@ class TestRequiredArgumentsAreNotSuccessfulObservations:
         required = set(schema_required(schema))
         args = {key: value for key, value in VALID_INVOCATIONS[name].items() if key not in required}
         raw = execute_mock(name, args)
-        assert not _looks_like_success(name, raw, args)
+        assert not _observation_raw_looks_like_success(name, raw)
 
     @pytest.mark.parametrize("name", sorted(advertised_tool_schemas()))
     def test_truncated_non_object_arguments_do_not_return_a_successful_observation(self, name: str) -> None:
@@ -392,7 +466,7 @@ class TestSideEffectTokens:
                 json.loads(token)
 
 
-class TestDomainToolsMustNotBeGenericStubs:
+class TestAcknowledgementStubs:
     def test_calculator_with_an_expression(self) -> None:
         arguments = {"expression": "234+567"}
         payload = _json("calculator", arguments)
@@ -442,7 +516,7 @@ class TestDomainToolsMustNotBeGenericStubs:
         assert payload.get("tool") == "list_directory"
         assert payload.get("args") == arguments
 
-    def test_read_note_returns_note_content(self) -> None:
+    def test_read_note_with_a_note_id(self) -> None:
         arguments = {"note_id": "n1"}
         payload = _json("read_note", arguments)
         assert payload.get("ok") is True
