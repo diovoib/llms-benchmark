@@ -14,8 +14,8 @@ Use only these strings. Do not invent codes.
 | LEAKED_TOOL_FORMAT | yes | Assistant `content` contains a native tool-template marker (`<tool_call>`, `<|tool_call|>`, `<tools>`, `[TOOL_CALLS]`, `<|python_tag|>`, `<invoke`, `<function`, `tool call: {`, …). |
 | IGNORED_OBSERVATION | yes | Final text missing required observation token, or success claimed after error-only tools. |
 | NO_STOP | yes | Agent loop still emitting tool_calls at max_steps; or C01 ended without `FINAL_REVIEW: OK` / `FINAL_REVIEW: NOK` (including `finish_reason=length` / context overflow). |
-| INVENTED_API | hidden tests | Request path or JSON keys outside the given contract. |
-| SPEC_ITEM_MISSING | hidden tests | Spec id failed, or `tool_client.py` missing/unparseable. |
+| INVENTED_API | unused | Not used. C01 does not run hidden HTTP tests against `tool_client.py`. |
+| SPEC_ITEM_MISSING | unused | Not used. C01 does not run hidden spec-item tests. Mechanical C01 checks are `python_checks.json` (syntax) and `FINAL_REVIEW` / truncation. |
 | REGRESSION | unused | Leftover from the old multi-round coding harness. |
 | CONTEXT_OVERFLOW | infra | Server error text reports context / n_ctx overflow. Exclude from hard_pass_rate. |
 | INFRA_ERROR | infra | Connection failure or 5xx/HTTP failure that is not context overflow. A stream that stayed silent longer than min(request_timeout_s / 2, 5s) before the HTTP deadline, or a non-stream deadline with no token timeline, is this code. Exclude from hard_pass_rate. |
