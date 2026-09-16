@@ -107,11 +107,13 @@ Domyślne parametry są dobre do przetestowania czy w ogóle setup działa. Kome
 python run.py run
 ```
 
-config: ``--config config.yaml`
+config: `--config config.yaml`
+
 suita: `--suites tools`
+
 profil: `--profiles greedy`
 
-Pełne testy warto uruchomić dopiero jak już każdy z wymienionych w pliku konfiguracyjnym model został sprawdzony na tych ustawieniach. Opcja `--verbose` wypisuje każde oceniane wywołanie HTTP do serwera modeli jako `\n\nRequest:\n` plus surowe ciało POST po wysłaniu, potem `\n\nResponse:\n` plus pełne ciało odpowiedzi po odbiorze. Nie dotyczy preflight ani `summarize`.
+Pełne testy warto uruchomić dopiero jak już każdy z wymienionych w pliku konfiguracyjnym model został sprawdzony na tych ustawieniach. Opcja `--verbose` wypisuje każde oceniane wywołanie HTTP jako czat, który model widzi (role, treść, narzędzia w YAML, bez pól samplera), potem strumieniuje generowany tekst i tokeny wywołań narzędzi w miarę napływania, a po tej turze HTTP wypisuje wywołania narzędzi jako YAML. Nie dotyczy preflight ani `summarize`.
 
 Komenda do skopiowania i usunięcia wartości z list, czy parametrów których nie potrzebujesz, jak już podstawowa działa. Zapoznaj się z detalami opcji w poniższych sekcjach.
 

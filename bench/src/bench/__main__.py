@@ -59,7 +59,11 @@ def main(argv: list[str] | None = None) -> int:
     p_run.add_argument("--suites", default="tools")
     p_run.add_argument("--prompt-variants", default="neutral", help="neutral,helpful,instructed,harness (empty = config prompt_variants)")
     p_run.add_argument("--out", default="")
-    p_run.add_argument("--verbose", action="store_true", help="print full HTTP request/response bodies on scored calls")
+    p_run.add_argument(
+        "--verbose",
+        action="store_true",
+        help="print the chat the model sees, then stream generated text and tool-call tokens; after each HTTP turn print tool calls as YAML",
+    )
     p_run.set_defaults(func=cmd_run)
 
     p_ref = sub.add_parser("check-reference")

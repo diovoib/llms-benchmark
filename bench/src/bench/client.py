@@ -189,18 +189,30 @@ def _apply_chunk(
     finish = ch.get("finish_reason")
     if finish:
         state["finish_reason"] = finish
-    delta = ch.get("delta") or ch.get("message") or {}
-    if not isinstance(delta, dict):
+    raw_delta = ch.get("delta")
+    raw_message = ch.get("message")
+    if isinstance(raw_delta, dict):
+        payload = raw_delta
+        tool_calls_are_deltas = True
+    elif isinstance(raw_message, dict):
+        payload = raw_message
+        tool_calls_are_deltas = False
+    else:
         return
-    piece = delta.get("content")
+    piece = payload.get("content")
     stamped = False
     if isinstance(piece, str) and piece:
         state["content"] += piece
         stamped = True
-    for tc in delta.get("tool_calls") or []:
+    for seq, tc in enumerate(payload.get("tool_calls") or []):
         if not isinstance(tc, dict):
             continue
-        idx = int(tc.get("index") or 0)
+        if tc.get("index") is not None:
+            idx = int(tc["index"])
+        elif tool_calls_are_deltas:
+            idx = 0
+        else:
+            idx = seq
         slots: list[dict[str, Any]] = state["tool_calls"]
         while len(slots) <= idx:
             slots.append(

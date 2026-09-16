@@ -108,10 +108,12 @@ python run.py run
 ```
 
 config: `--config config.yaml`
+
 suite: `--suites tools`
+
 profile: `--profiles greedy`
 
-Full tests are worth running only after every model listed in the config file has been checked with these settings. `--verbose` prints each scored HTTP call to the model server as `\n\nRequest:\n` plus the raw POST body after send, then `\n\nResponse:\n` plus the full response body after receive. Not used on preflight or `summarize`.
+Full tests are worth running only after every model listed in the config file has been checked with these settings. `--verbose` prints each scored HTTP call as the chat the model sees (roles, text, tools as YAML, without sampler fields), then streams generated text and tool-call tokens as they arrive, then prints tool calls as YAML after that HTTP turn. Not used on preflight or `summarize`.
 
 A command to copy and then delete list values or flags you do not need, once the basic run works. Details of the options are in the sections below.
 
