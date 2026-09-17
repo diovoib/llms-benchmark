@@ -65,7 +65,7 @@ curl -H "Authorization: Bearer <api_key>" http://127.0.0.1:8080/v1/models
 5. Skopiuj i wyedytuj `[bench/config.yaml.example](bench/config.yaml.example)` do `config.yaml`
 - `base_url` — np. `http://127.0.0.1:8080/v1`
 - `models[0].name` — **dokładna nazwa modelu z routera**
-- `models[0].recommended_temperature` — używana przez profil `real` (`temperature: null`, jeśli ma być domyślna modelu)
+- `models[0].recommended_temperature` — używana przez profil `real`. Brak klucza albo `null` oznacza, że żądanie nie zawiera pola `temperature` (domyślna serwera/modelu). Liczba jest wysyłana jako `temperature`.
 - `prompt_variants` — jakich profili użyć gdy nie podane w opcjach startowych bencha, patrz niżej.
 
 6. Po wejściu w command line do katalogu `bench/` uruchom poniższą komendę:
@@ -76,6 +76,11 @@ python run.py run
 
 7. Po uruchomieniu bench tworzy `bench/results/20260906T100000Z` z logami i wynikami z przebiegu. 
 W trakcie podaje też podstawowe informacje o postępie, żeby można było zobaczyć czy w ogóle działa jak powinien, czy warto już zatrzymać i poprawić ustawienia.
+
+
+## Wyniki
+
+Tu jest link do raportu dla przykładowego zestawu modeli: [Wyniki Modeli](https://github.com/diovoib/llms-benchmark/blob/master/models-result-report.pl.html).
 
 
 ## Szczegóły funkcjonalności
@@ -129,7 +134,7 @@ python run.py run --verbose --config my.config.yaml --profiles greedy,real --sui
 | Profil   | Sens                                                                            |
 | -------- | ------------------------------------------------------------------------------- |
 | `greedy` | `temperature: 0`, stały seed. Sanity check i detektor niedeterminizmu backendu. |
-| `real`   | Temperatura brana jest z `recommended_temperature`, per model.                  |
+| `real`   | Temperatura z `recommended_temperature` per model. Brak klucza albo `null`: w żądaniu nie ma pola `temperature`. |
 
 Dla każdego profilu w konfigu definiuje się ilość powtórzeń danego testu. Powtórzenia są istotne, ponieważ modele co do zasady są niederministyczne, nawet mimo ustawienia `temperature: 0`.
 

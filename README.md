@@ -65,7 +65,7 @@ curl -H "Authorization: Bearer <api_key>" http://127.0.0.1:8080/v1/models
 5. Copy [`bench/config.yaml.example`](bench/config.yaml.example) to `config.yaml` and edit it:
 - `base_url` — e.g. `http://127.0.0.1:8080/v1`
 - `models[0].name` — **exact router model name**
-- `models[0].recommended_temperature` — used by profile `real` (`temperature: null` if the model default should be used)
+- `models[0].recommended_temperature` — used by profile `real`. Omit the key or set `null` to leave `temperature` out of the chat request (server/model default). A number is sent as `temperature`.
 - `prompt_variants` — which variants to use when they are not given on the bench command line; see below.
 
 6. From a command line in `bench/`, run:
@@ -76,6 +76,11 @@ python run.py run
 
 7. After it starts, the bench creates `bench/results/20260906T100000Z` with logs and results from the run.
 While it runs it also prints basic progress, so you can see whether it is working at all, or whether it is already worth stopping and fixing the settings.
+
+
+## Results
+
+Here is the link to the report presenting the results of the sample models set: [Models Results](https://github.com/diovoib/llms-benchmark/blob/master/models-result-report.en.html).
 
 
 ## Functionality details
@@ -129,7 +134,7 @@ python run.py run --verbose --config my.config.yaml --profiles greedy,real --sui
 | Profile | Meaning |
 | --- | --- |
 | `greedy` | `temperature: 0`, fixed seed. Sanity check and backend non-determinism detector. |
-| `real` | Temperature taken from `recommended_temperature`, per model. |
+| `real` | Temperature from `recommended_temperature` per model. Missing or `null` recommended temperature: the request has no `temperature` field. |
 
 For each profile the config defines how many times a given test is repeated. Repeats matter because models are non-deterministic in principle, even with `temperature: 0`.
 
