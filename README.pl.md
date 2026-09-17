@@ -80,7 +80,7 @@ W trakcie podaje też podstawowe informacje o postępie, żeby można było zoba
 
 ## Wyniki
 
-Tu jest link do raportu dla przykładowego zestawu modeli: [Wyniki Modeli](https://diovoib.github.io/llms-benchmark/models-result-report.pl.html){:target="_blank"} 
+Tu jest link do raportu dla przykładowego zestawu modeli: [Wyniki Modeli](https://diovoib.github.io/llms-benchmark/models-result-report.pl.html).
 
 
 ## Szczegóły funkcjonalności
