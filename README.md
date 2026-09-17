@@ -80,7 +80,7 @@ While it runs it also prints basic progress, so you can see whether it is workin
 
 ## Results
 
-Here is the link to the report presenting the results of the sample models set: [Models Results](https://diovoib.github.io/llms-benchmark/models-result-report.en.html).
+Here is the link to the report presenting the results of the sample models set: [Models Results](https://diovoib.github.io/llms-benchmark/models-result-report.en.html){:target="_blank"}
 
 
 ## Functionality details
