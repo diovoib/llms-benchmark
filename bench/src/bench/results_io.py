@@ -89,8 +89,8 @@ This directory is enough to judge the run. Do not open the git repository.
 
 1. Case folder — no summary (read the trials).
 2. Prompt variant — `build_summary` on that folder’s completed trials.
-3. Profile (`greedy` / `real`) — unweighted mean of the variants’ `weighted_suite_hard_pass_rate`. C01 is a block on the profile summary, not in that mean.
-4. Model — unweighted mean of greedy/real headlines that exist.
+3. Profile (`greedy` / `agentic` / `creative`, or any other profile folder) — unweighted mean of the variants’ `weighted_suite_hard_pass_rate`. C01 is a block on the profile summary, not in that mean.
+4. Model — unweighted mean of the profile headlines that exist.
 5. This root — unweighted mean of model headlines. One headline number.
 
 `python run.py summarize <dir>` rebuilds these files. It skips unparseable JSON and `in_progress` trials. It does not rewrite trial content or `*.raw.txt`.
@@ -103,7 +103,7 @@ Start from this folder’s `README.md`. Then:
 2. `CASE.md` next to tools/agent trials (purpose / expected result). C01 has no CASE.md — read `conversation.txt`, `python_checks.json`, and `attempts/`. Do not run the extracted code.
 3. `trial_*.txt` (assembled chat)
 4. `*.raw.txt` when the `.txt` is short but wall time or `completion_tokens` is large — generation is on the wire even if the assembled transcript looks empty
-5. `trial_*.json` and the **prompt-variant** `summary.json` (`<model>/<profile>/<variant>/`). Those are mechanical ground truth. Profile (`greedy`/`real`), model, and this root `summary.json` are unweighted means of the child headlines, not a second scoring pass.
+5. `trial_*.json` and the **prompt-variant** `summary.json` (`<model>/<profile>/<variant>/`). Those are mechanical ground truth. Profile folders, model, and this root `summary.json` are unweighted means of the child headlines, not a second scoring pass.
 
 Do not open the git repository, `llama.bat` / `llama.sh`, or `bench/src`.
 

@@ -65,7 +65,7 @@ curl -H "Authorization: Bearer <api_key>" http://127.0.0.1:8080/v1/models
 5. Skopiuj i wyedytuj `[bench/config.yaml.example](bench/config.yaml.example)` do `config.yaml`
 - `base_url` — np. `http://127.0.0.1:8080/v1`
 - `models[0].name` — **dokładna nazwa modelu z routera**
-- `models[0].recommended_temperature` — używana przez profil `real`. Brak klucza albo `null` oznacza, że żądanie nie zawiera pola `temperature` (domyślna serwera/modelu). Liczba jest wysyłana jako `temperature`.
+- `models[0].recommended_temperature` — używana tylko gdy profil samplera ma `temperature: null`. Brak klucza albo `null` oznacza, że żądanie nie zawiera pola `temperature` (domyślna serwera/modelu). Liczba jest wysyłana jako `temperature`. Profile `greedy` / `agentic` / `creative` w przykładzie same ustawiają temperaturę, więc ten klucz jest opcjonalny.
 - `prompt_variants` — jakich profili użyć gdy nie podane w opcjach startowych bencha, patrz niżej.
 
 6. Po wejściu w command line do katalogu `bench/` uruchom poniższą komendę:
@@ -123,7 +123,7 @@ Pełne testy warto uruchomić dopiero jak już każdy z wymienionych w pliku kon
 Komenda do skopiowania i usunięcia wartości z list, czy parametrów których nie potrzebujesz, jak już podstawowa działa. Zapoznaj się z detalami opcji w poniższych sekcjach.
 
 ```text
-python run.py run --verbose --config my.config.yaml --profiles greedy,real --suites tools,agent,coding --prompt-variants neutral,helpful,instructed,harness --out results
+python run.py run --verbose --config my.config.yaml --profiles greedy,agentic,creative --suites tools,agent,coding --prompt-variants neutral,helpful,instructed,harness --out results
 ```
 
 - `harness` — użyj tylko wtedy, gdy w configu yaml jest uzupełniony system prompt, wysyłany przez używanego agenta (np Hermes).
@@ -131,10 +131,11 @@ python run.py run --verbose --config my.config.yaml --profiles greedy,real --sui
 
 ### Profile samplera
 
-| Profil   | Sens                                                                            |
-| -------- | ------------------------------------------------------------------------------- |
-| `greedy` | `temperature: 0`, stały seed. Sanity check i detektor niedeterminizmu backendu. |
-| `real`   | Temperatura z `recommended_temperature` per model. Brak klucza albo `null`: w żądaniu nie ma pola `temperature`. |
+| Profil     | Sens                                                                                                              |
+| ---------- | ----------------------------------------------------------------------------------------------------------------- |
+| `greedy`   | `temperature: 0`, stały seed. Sanity check i detektor niedeterminizmu backendu.                                   |
+| `agentic`  | `temperature: 0.3`, `min_p: 0.10`, `top_k: 0`, `top_p: 1.0`. Codzienne samplowanie małego modelu jako agenta.     |
+| `creative` | `temperature: 0.5`, `min_p: 0.15`, `top_k: 0`, `top_p: 1.0`. Proza / dokumentacja; nadal Min-P, bez stosu Top-K. |
 
 Dla każdego profilu w konfigu definiuje się ilość powtórzeń danego testu. Powtórzenia są istotne, ponieważ modele co do zasady są niederministyczne, nawet mimo ustawienia `temperature: 0`.
 
@@ -287,7 +288,7 @@ results/<timestamp>/
 
 ## Sędzia
 
-Automatyczne 0/1 nie kończy oceny. Sędziemu dajesz katalog wyników (ma własne `README.md`, `judge/`, `CASE.md`, transkrypty). Nie oczekuj, że otworzy to repo. Mechaniczny ground truth to pliki trial plus `summary.json` wariantu promptu; podsumowania greedy/real, modelu i korzenia to średnie z nagłówków dzieci.
+Automatyczne 0/1 nie kończy oceny. Sędziemu dajesz katalog wyników (ma własne `README.md`, `judge/`, `CASE.md`, transkrypty). Nie oczekuj, że otworzy to repo. Mechaniczny ground truth to pliki trial plus `summary.json` wariantu promptu; podsumowania greedy/agentic/creative, modelu i korzenia to średnie z nagłówków dzieci.
 
 
 ### Interpretacja
@@ -296,7 +297,7 @@ Automatyczne 0/1 nie kończy oceny. Sędziemu dajesz katalog wyników (ma własn
 
 Dwa GGUF porównuj jako dwa osobne wpisy w `models` w configu, na tym samym serwerze i tych samych suitach.
 
-Profil `greedy` (temperatura 0) jest po to, żeby zobaczyć czy w ogóle działa i czy backend nie losuje przy „wyłączonej” losowości. Do decyzji, czy model nadaje się na agenta, patrz na `real` i na to *jakich* błędów jest dużo, nie na jedną średnią.
+Profil `greedy` (temperatura 0) jest po to, żeby zobaczyć czy w ogóle działa i czy backend nie losuje przy „wyłączonej” losowości. Do decyzji, czy model nadaje się na agenta, patrz na `agentic` i na to *jakich* błędów jest dużo, nie na jedną średnią.
 
 
 ## Zawartość projektu

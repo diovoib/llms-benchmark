@@ -4,7 +4,7 @@ You receive one results directory (a timestamp folder, a packed set of model tre
 
 Compare models when more than one is present.
 
-Mechanical ground truth is each trial’s `trial_*.json` (`hard_pass` / `violations`) plus the **prompt-variant** `summary.json` at `<model>/<profile>/<prompt_variant>/`. Do not recompute JSON/tool-parse checks. Do not flip `hard_pass` because a transcript looks right or wrong. `summary.json` on `greedy`/`real`, on the model folder, and at this root are unweighted means of the child headlines, not a second scoring pass.
+Mechanical ground truth is each trial’s `trial_*.json` (`hard_pass` / `violations`) plus the **prompt-variant** `summary.json` at `<model>/<profile>/<prompt_variant>/`. Do not recompute JSON/tool-parse checks. Do not flip `hard_pass` because a transcript looks right or wrong. `summary.json` on each profile folder (`greedy`, `agentic`, `creative`, …), on the model folder, and at this root are unweighted means of the child headlines, not a second scoring pass.
 
 Tools/agent card: `CASE.md` next to the trials (Purpose / Expected result). Also read `trial_*.txt`. If that file is short but wall time or `completion_tokens` is large, read `trial_*.raw.txt` — generation is on the wire.
 

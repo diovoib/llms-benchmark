@@ -346,11 +346,31 @@ These cases are the mechanical counterpart of the `IGNORED_OBSERVATION` rows tha
 
 **test_seeded_unparsed_history_is_bench_internal_error.** If case history already contains truncated `{` arguments before the first chat, the tools loop must not call the model. The trial is `BENCH_INTERNAL_ERROR`, the `{` remains in `messages`, and it is not `INFRA_ERROR`.
 
+### Config (`test_config.py`)
+
+**test_example_config_profiles_are_greedy_agentic_creative.** The example YAML must declare sampler profiles `greedy`, `agentic`, and `creative`, and each suite’s `repeats` map must use those same three names. A leftover `real` key would mean the example still documents the old stacked-filter profile.
+
+### Summary tree (`test_summary.py`)
+
+These cases check that result folders named after config profiles are summarised. They do not start a model server.
+
+**test_looks_like_model_tree_when_only_agentic_profile_exists.** A model directory that contains only `agentic` (preflight plus a prompt-variant `cases` tree) must be recognised as a model tree. The parent of that model directory must not be treated as a model tree.
+
+**test_prompt_variant_folder_is_not_a_profile_directory.** `agentic/neutral` holds `cases/` but is a prompt variant. Only `agentic` itself is a profile directory.
+
+**test_coding_only_creative_folder_is_a_profile_directory.** A `creative` folder that has `coding/` and no tools cases must still count as a profile so C01-only runs summarise.
+
+**test_model_summary_includes_agentic_and_creative.** After `write_summary_tree`, the model `summary.json` `by_profile` map must contain `greedy`, `agentic`, and `creative`. The `agentic`/`neutral` variant summary must record `profile` and `model`.
+
+**test_legacy_real_profile_folder_still_summarizes.** An old results tree that still uses a folder named `real` must appear in `by_profile`. Summaries key off directory layout, not a hard-coded name list.
+
+**test_trial_label_keeps_full_agentic_and_creative_names.** Console labels must contain the full strings `agentic` and `creative`, not a 7-character truncation.
+
 ### Mode key and suite weights
 
 **test_mode_key_weather_vs_leak_vs_no_tools.** Two identical normalized weather calls must produce the same mode key. A leaked tool-format marker in the assistant text, or a turn with no tools at all, must produce a different key. Aggregation groups trials by this key.
 
-**test_suite_weights.** Tools suite weight is 1.0, agent suite weight is 2.0, and coding suite weight is 0.0 so coding quality is never mixed into the weighted hard-pass rate.
+**test_suite_weights.** Tools suite weight is 3.0, agent suite weight is 4.0, and coding suite weight is 0.0 so coding quality is never mixed into the weighted hard-pass rate.
 
 ### Dimension coverage
 

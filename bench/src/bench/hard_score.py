@@ -473,7 +473,7 @@ DIMENSIONS = {
 }
 
 # Coding is reported as quality/rounds/voluntary, never mixed into the weighted suite rate.
-SUITE_WEIGHTS = {"tools": 1.0, "agent": 2.0, "coding": 0.0}
+SUITE_WEIGHTS = {"tools": 3.0, "agent": 4.0, "coding": 0.0}
 
 
 def aggregate_trials(trials: list[dict[str, Any]]) -> dict[str, Any]:

@@ -1557,7 +1557,7 @@ class TestModeKeyAndSuiteWeights:
         assert leaked != no_tools
 
     def test_suite_weights(self) -> None:
-        assert SUITE_WEIGHTS == {"tools": 1.0, "agent": 2.0, "coding": 0.0}
+        assert SUITE_WEIGHTS == {"tools": 3.0, "agent": 4.0, "coding": 0.0}
 
 
 class TestCasesThatWereOnlyInTheDimensionMap:

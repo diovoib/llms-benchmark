@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+import yaml
 
 from bench.config import (
     DEFAULT_CTX_SIZE,
@@ -66,6 +67,13 @@ def test_real_profile_omits_temperature_when_recommended_is_absent() -> None:
 
 def test_real_profile_omits_temperature_when_recommended_is_null() -> None:
     assert resolve_temperature({"temperature": None}, {"recommended_temperature": None}) is None
+
+
+def test_example_config_profiles_are_greedy_agentic_creative() -> None:
+    data = yaml.safe_load((ROOT / "bench" / "config.yaml.example").read_text(encoding="utf-8"))
+    assert set(data["profiles"]) == {"greedy", "agentic", "creative"}
+    for suite in ("tools", "agent", "coding"):
+        assert set(data["suites"][suite]["repeats"]) == {"greedy", "agentic", "creative"}
 
 
 def test_greedy_profile_keeps_zero_temperature() -> None:

@@ -40,7 +40,7 @@ def trial_label(
 ) -> str:
     var = variant if variant else "—"
     return (
-        f"{case_id:<8}  {suite:<6}  {profile:<7}  {var:<10}  "
+        f"{case_id:<8}  {suite:<6}  {profile:<8}  {var:<10}  "
         f"{repeat + 1}/{nrep}  seed={seed}"
     )
 

@@ -65,7 +65,7 @@ curl -H "Authorization: Bearer <api_key>" http://127.0.0.1:8080/v1/models
 5. Copy [`bench/config.yaml.example`](bench/config.yaml.example) to `config.yaml` and edit it:
 - `base_url` — e.g. `http://127.0.0.1:8080/v1`
 - `models[0].name` — **exact router model name**
-- `models[0].recommended_temperature` — used by profile `real`. Omit the key or set `null` to leave `temperature` out of the chat request (server/model default). A number is sent as `temperature`.
+- `models[0].recommended_temperature` — used only when a sampler profile has `temperature: null`. Omit the key or set `null` to leave `temperature` out of the chat request (server/model default). A number is sent as `temperature`. The bundled `greedy` / `agentic` / `creative` profiles set temperature themselves, so this key is optional.
 - `prompt_variants` — which variants to use when they are not given on the bench command line; see below.
 
 6. From a command line in `bench/`, run:
@@ -123,7 +123,7 @@ Full tests are worth running only after every model listed in the config file ha
 A command to copy and then delete list values or flags you do not need, once the basic run works. Details of the options are in the sections below.
 
 ```text
-python run.py run --verbose --config my.config.yaml --profiles greedy,real --suites tools,agent,coding --prompt-variants neutral,helpful,instructed,harness --out results
+python run.py run --verbose --config my.config.yaml --profiles greedy,agentic,creative --suites tools,agent,coding --prompt-variants neutral,helpful,instructed,harness --out results
 ```
 
 - `harness` — use only when the yaml config has the system prompt filled in, the one sent by the agent you actually use (e.g. Hermes).
@@ -134,7 +134,8 @@ python run.py run --verbose --config my.config.yaml --profiles greedy,real --sui
 | Profile | Meaning |
 | --- | --- |
 | `greedy` | `temperature: 0`, fixed seed. Sanity check and backend non-determinism detector. |
-| `real` | Temperature from `recommended_temperature` per model. Missing or `null` recommended temperature: the request has no `temperature` field. |
+| `agentic` | `temperature: 0.3`, `min_p: 0.10`, `top_k: 0`, `top_p: 1.0`. Daily local-agent sampling for small models. |
+| `creative` | `temperature: 0.5`, `min_p: 0.15`, `top_k: 0`, `top_p: 1.0`. Prose / documentation; still Min-P, not the old stacked Top-K stack. |
 
 For each profile the config defines how many times a given test is repeated. Repeats matter because models are non-deterministic in principle, even with `temperature: 0`.
 
@@ -287,7 +288,7 @@ results/<timestamp>/
 
 ## Judge
 
-Automatic 0/1 does not finish the evaluation. Give the judge the results folder (it has its own `README.md`, `judge/`, `CASE.md`, transcripts). Do not expect the judge to open this git repo. Mechanical ground truth is the trial files plus the prompt-variant `summary.json`; greedy/real, model, and root summaries are means of those child headlines.
+Automatic 0/1 does not finish the evaluation. Give the judge the results folder (it has its own `README.md`, `judge/`, `CASE.md`, transcripts). Do not expect the judge to open this git repo. Mechanical ground truth is the trial files plus the prompt-variant `summary.json`; greedy/agentic/creative, model, and root summaries are means of those child headlines.
 
 
 ### Interpretation
@@ -296,7 +297,7 @@ It is easy to confuse a server defect with a model defect. If the model both fai
 
 Compare two GGUFs as two separate `models` entries in the config, on the same server and the same suites.
 
-The `greedy` profile (temperature 0) is there to see whether things work at all, and whether the backend still rolls dice with randomness “turned off”. For a decision on whether the model is fit to be an agent, look at `real` and at *which* kinds of errors are common, not at one average.
+The `greedy` profile (temperature 0) is there to see whether things work at all, and whether the backend still rolls dice with randomness “turned off”. For a decision on whether the model is fit to be an agent, look at `agentic` and at *which* kinds of errors are common, not at one average.
 
 
 ## Project contents

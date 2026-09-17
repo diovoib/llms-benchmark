@@ -21,7 +21,6 @@ from bench.suites.cases import all_cases
 
 
 STAMP_RE = re.compile(r"^\d{8}T\d{6}Z$")
-PROFILE_NAMES = frozenset({"greedy", "real"})
 
 
 def _rates_block(trials: list[dict[str, Any]]) -> dict[str, Any]:
@@ -298,10 +297,31 @@ def backfill_judge_kit(root: Path) -> None:
     backfill_case_md(root)
 
 
+def _is_profile_dir(path: Path) -> bool:
+    """True for <model>/<profile>, not for a prompt-variant folder."""
+    if not path.is_dir():
+        return False
+    if (path / "preflight.json").is_file():
+        return True
+    if (path / "coding").is_dir():
+        return True
+    try:
+        children = list(path.iterdir())
+    except OSError:
+        return False
+    return any(
+        child.is_dir() and (child / "cases").is_dir()
+        for child in children
+        if child.name != "coding"
+    )
+
+
 def _profile_dirs(root: Path) -> list[Path]:
+    if not root.is_dir():
+        return []
     found: list[Path] = []
     for path in root.rglob("*"):
-        if path.is_dir() and path.name in PROFILE_NAMES:
+        if _is_profile_dir(path):
             found.append(path)
     return sorted(found)
 
@@ -318,7 +338,7 @@ def write_variant_summaries(root: Path) -> None:
                 trials.append(row)
         summary = build_summary(trials, [])
         summary["prompt_variant"] = variant_dir.name
-        if variant_dir.parent.name in PROFILE_NAMES:
+        if _is_profile_dir(variant_dir.parent):
             summary["profile"] = variant_dir.parent.name
             summary["model"] = variant_dir.parent.parent.name
         _write_summary_pair(variant_dir, summary)
@@ -369,12 +389,15 @@ def write_model_summaries(root: Path) -> list[Path]:
     for model_dir in model_dirs:
         by_profile: dict[str, Any] = {}
         rates: list[float] = []
-        for name in ("greedy", "real"):
-            block = _load_json(model_dir / name / "summary.json")
+        for profile_dir in sorted(
+            (p for p in _profile_dirs(root) if p.parent == model_dir),
+            key=lambda p: p.name,
+        ):
+            block = _load_json(profile_dir / "summary.json")
             rate = _headline_rate(block)
             if rate is None:
                 continue
-            by_profile[name] = {"weighted_suite_hard_pass_rate": rate}
+            by_profile[profile_dir.name] = {"weighted_suite_hard_pass_rate": rate}
             rates.append(rate)
         _write_summary_pair(
             model_dir,
@@ -420,19 +443,13 @@ def write_summary_tree(root: Path, *, backfill: bool = False) -> None:
 
 
 def looks_like_model_tree(path: Path) -> bool:
-    for name in PROFILE_NAMES:
-        profile = path / name
-        if not profile.is_dir():
-            continue
-        if (profile / "preflight.json").is_file():
-            return True
-        if (profile / "coding").is_dir():
-            return True
-        if (profile / "cases").is_dir():
-            return True
-        if any(child.is_dir() and (child / "cases").is_dir() for child in profile.iterdir()):
-            return True
-    return False
+    if not path.is_dir():
+        return False
+    try:
+        children = list(path.iterdir())
+    except OSError:
+        return False
+    return any(child.is_dir() and _is_profile_dir(child) for child in children)
 
 
 def summarize_targets(path: Path) -> list[Path]:

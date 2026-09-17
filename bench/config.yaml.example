@@ -23,7 +23,6 @@ optional_temp_sweep:
 
 models:
   - name: gemma-4-12b-it-Q5_K_M
-    recommended_temperature: 0.7
 
 profiles:
   greedy:
@@ -37,12 +36,22 @@ profiles:
     thinking: false
     chat_template_kwargs:
       enable_thinking: false
-  real:
-    temperature: null
-    top_p: 0.95
-    top_k: 40
-    min_p: 0.05
-    repeat_penalty: 1.1
+  agentic:
+    temperature: 0.3
+    top_p: 1.0
+    top_k: 0
+    min_p: 0.10
+    repeat_penalty: 1.0
+    seed_policy: unique
+    thinking: false
+    chat_template_kwargs:
+      enable_thinking: false
+  creative:
+    temperature: 0.5
+    top_p: 1.0
+    top_k: 0
+    min_p: 0.15
+    repeat_penalty: 1.0
     seed_policy: unique
     thinking: false
     chat_template_kwargs:
@@ -55,17 +64,20 @@ suites:
     cases: [T01_pl, T01_en, T02, T03_pl, T03_en, T04_pl, T04_en, T05, T06, T07, T08_pl, T08_en, T09_pl, T09_en, T10, T11_pl, T11_en, T12_pl, T12_en, T13_pl, T13_en, T14_pl, T14_en, T15_pl, T15_en, T16_pl, T16_en, T17_pl, T17_en, T18_pl, T18_en]
     repeats:
       greedy: 2
-      real: 5
+      agentic: 5
+      creative: 2
   agent:
     request_timeout_s: 90
     max_tokens: 1024
     cases: [A01_pl, A01_en, A02_pl, A02_en, A03_pl, A03_en, A04_pl, A04_en, A05, A06_pl, A06_en, A07]
     repeats:
       greedy: 2
-      real: 3
+      agentic: 5
+      creative: 2
   coding:
-    request_timeout_s: 2400
+    request_timeout_s: 3600
     cases: [C01]
     repeats:
       greedy: 1
-      real: 1
+      agentic: 3
+      creative: 1
