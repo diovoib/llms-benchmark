@@ -246,11 +246,14 @@ def snapshot_config(cfg: dict[str, Any]) -> dict[str, Any]:
     return snap
 
 
-def resolve_temperature(profile: dict[str, Any], model: dict[str, Any]) -> float:
+def resolve_temperature(profile: dict[str, Any], model: dict[str, Any]) -> float | None:
     temp = profile.get("temperature")
-    if temp is None:
-        return float(model.get("recommended_temperature", 0.7))
-    return float(temp)
+    if temp is not None:
+        return float(temp)
+    recommended = model.get("recommended_temperature")
+    if recommended is None:
+        return None
+    return float(recommended)
 
 
 _MODEL_DIR_UNSAFE = str.maketrans({ch: "_" for ch in '\\/:*?"<>|'})

@@ -126,6 +126,23 @@ def _error_message(payload: Any) -> str:
     return str(payload)
 
 
+def _default_generation_temperature(props: Any) -> float | None:
+    if not isinstance(props, dict):
+        return None
+    dgs = props.get("default_generation_settings")
+    if not isinstance(dgs, dict):
+        return None
+    params = dgs.get("params")
+    blob = params if isinstance(params, dict) else dgs
+    raw = blob.get("temperature")
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def collect_server_info(
     base_url: str,
     api_key: str | None = None,
@@ -158,6 +175,7 @@ def collect_server_info(
         "models": {"status": models_status, "body": models},
         "chat_format": chat_format,
         "build": build,
+        "default_temperature": _default_generation_temperature(props),
         "host": urlparse(root).netloc,
     }
 

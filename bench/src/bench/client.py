@@ -126,7 +126,7 @@ def _build_request_body(
     tools: list[dict[str, Any]] | None,
     tool_choice: Any,
     parallel_tool_calls: bool | None,
-    temperature: float,
+    temperature: float | None,
     top_p: float,
     top_k: int,
     min_p: float,
@@ -139,12 +139,13 @@ def _build_request_body(
     body: dict[str, Any] = {
         "model": model,
         "messages": messages,
-        "temperature": temperature,
         "top_p": top_p,
         "top_k": top_k,
         "min_p": min_p,
         "repeat_penalty": repeat_penalty,
     }
+    if temperature is not None:
+        body["temperature"] = temperature
     if seed is not None:
         body["seed"] = seed
     if tools:
@@ -348,7 +349,7 @@ class ChatClient(Protocol):
         tools: list[dict[str, Any]] | None = None,
         tool_choice: Any | None = None,
         parallel_tool_calls: bool | None = None,
-        temperature: float,
+        temperature: float | None,
         top_p: float,
         top_k: int,
         min_p: float,
@@ -436,7 +437,7 @@ class BenchClient:
         tools: list[dict[str, Any]] | None = None,
         tool_choice: Any | None = None,
         parallel_tool_calls: bool | None = None,
-        temperature: float,
+        temperature: float | None,
         top_p: float,
         top_k: int,
         min_p: float,
