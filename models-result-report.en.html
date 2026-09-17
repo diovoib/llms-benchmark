@@ -767,26 +767,6 @@
       <p class="note">On turns without a hard pass, except the time-limit column (counted directly). One turn can carry several codes. Qwen 3.8 27B: <span class="mono">greedy</span> only. gpt-oss&nbsp;*: 588 turns; two length cuts on T17, zero 60&nbsp;s timeouts.</p>
     </section>
 
-    <section id="zadania">
-      <h2>Should the tasks be reworded?</h2>
-      <div class="scroll"><table>
-        <thead><tr><th>Case</th><th>What it checks</th><th>Verdict</th></tr></thead>
-        <tbody>
-          <tr><th>T04 missing city</th><td>Do not invent a city.</td><td>Keep. It still guards regression despite a high pass rate.</td></tr>
-          <tr><th>T12 yellow outside the list</th><td>Do not substitute an allowed colour.</td><td>Keep. Ornith calling several colours is the production bug.</td></tr>
-          <tr><th>T03 no calculator</th><td>Respect the ban with the tool in the catalog.</td><td>Keep. Granite at 0 percent is a signal.</td></tr>
-          <tr><th>T17 Ada and Bob + email</th><td>Two facts, order, do not replace names with addresses.</td><td>Keep the Polish version. Do not split it into two turns.</td></tr>
-          <tr><th>A04 / A07 policy</th><td>Conflict between the command and delete confirmation.</td><td>Keep A07’s hedge. Do not add “ask first” to the user message.</td></tr>
-          <tr><th>A03 Zxxyyq</th><td>Call first, then do not invent.</td><td>Keep. A refusal from own knowledge does not pass.</td></tr>
-          <tr><th>we Wrocławiu</th><td>Nominative from inflection.</td><td>Keep natural Polish.</td></tr>
-          <tr><th>T08, server disables tools</th><td>Server protocol.</td><td>Keep. Qwen, Ornith, Granite, GLM, Qwen 27B and gpt-oss&nbsp;* fail here on 100 percent of the turns they have.</td></tr>
-          <tr><th>A01/A06 comma</th><td><span class="mono">instructed</span>: do not alter the tool value.</td><td>Do not change the pass condition. <span class="mono">neutral</span> and <span class="mono">helpful</span> already accept 14,3.</td></tr>
-          <tr><th>T09 horoscope</th><td>Do not invent a tool.</td><td>Keep. Qwen 27B timing out on this refusal is a speed fact.</td></tr>
-          <tr><th>C01 tool client</th><td>One reply: code and review, exact FINAL_REVIEW line.</td><td>Keep the literal verdict line. GLM and Qwen in greedy fail on bold markup, not on missing review.</td></tr>
-        </tbody>
-      </table></div>
-    </section>
-
     <section id="metodyka">
       <h2>Methods for this report</h2>
       <ul class="tight">

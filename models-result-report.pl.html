@@ -767,26 +767,6 @@
       <p class="note">Na turach bez twardego zaliczenia, poza kolumną limitu czasu (liczone wprost). Jedna tura może mieć kilka kodów. Qwen 3.8 27B: wyłącznie <span class="mono">greedy</span>. gpt-oss&nbsp;*: 588 tur; dwa ucięcia długości na T17, zero przekroczeń 60&nbsp;s.</p>
     </section>
 
-    <section id="zadania">
-      <h2>Czy przeformułowywać zadania?</h2>
-      <div class="scroll"><table>
-        <thead><tr><th>Przypadek</th><th>Co sprawdza</th><th>Werdykt</th></tr></thead>
-        <tbody>
-          <tr><th>T04 brak miasta</th><td>Nie zmyślać miasta.</td><td>Zostawić. Chroni przed regresją mimo wysokiego zaliczenia.</td></tr>
-          <tr><th>T12 żółty poza listą</th><td>Nie podstawiać dozwolonego koloru.</td><td>Zostawić. Ornith wołający kilka kolorów to błąd produkcyjny.</td></tr>
-          <tr><th>T03 bez kalkulatora</th><td>Uszanować zakaz przy narzędziu w katalogu.</td><td>Zostawić. Granite 0&nbsp;proc. to sygnał.</td></tr>
-          <tr><th>T17 Ada i Bob + mail</th><td>Dwa fakty, kolejność, nie podmieniać imion na adresy.</td><td>Zostawić polską wersję. Nie rozdzielać na dwie tury.</td></tr>
-          <tr><th>A04 / A07 polityka</th><td>Konflikt polecenia i potwierdzenia usunięcia.</td><td>Zostawić dwuznaczność A07. Nie dopisywać „najpierw zapytaj” w komunikacie użytkownika.</td></tr>
-          <tr><th>A03 Zxxyyq</th><td>Najpierw wywołać, potem nie zmyślać.</td><td>Zostawić. Odmowa z własnej wiedzy nie zalicza tury.</td></tr>
-          <tr><th>we Wrocławiu</th><td>Mianownik z odmiany.</td><td>Zostawić naturalną polszczyznę.</td></tr>
-          <tr><th>T08, serwer wyłącza narzędzia</th><td>Protokół serwera.</td><td>Zostawić. Qwen, Ornith, Granite, GLM, Qwen 27B i gpt-oss&nbsp;* odpadają tu w 100&nbsp;proc. dostępnych tur.</td></tr>
-          <tr><th>A01/A06 przecinek</th><td><span class="mono">instructed</span>: nie zmieniać wartości narzędzia.</td><td>Nie zmieniać warunków. <span class="mono">neutral</span> i <span class="mono">helpful</span> już akceptują 14,3.</td></tr>
-          <tr><th>T09 horoskop</th><td>Nie zmyślać narzędzia.</td><td>Zostawić. Przekroczenie limitu przez Qwen 27B na tej odmowie jest informacją o prędkości.</td></tr>
-          <tr><th>C01 klient narzędzi</th><td>Jedna odpowiedź: kod i recenzja, dokładna linia FINAL_REVIEW.</td><td>Zostawić dosłowną linię werdyktu. GLM i Qwen w greedy odpadają na pogrubieniu, nie na braku recenzji.</td></tr>
-        </tbody>
-      </table></div>
-    </section>
-
     <section id="metodyka">
       <h2>Metodyka tego raportu</h2>
       <ul class="tight">
